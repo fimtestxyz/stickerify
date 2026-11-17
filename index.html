@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stickerify — turn heads into stickers</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>🪄 Stickerify</h1>
+  <p class="tagline">Upload a photo, we cut out the heads and turn them into stickers.</p>
+  <p class="privacy">🔒 <strong>Private by design:</strong> your photos never leave this device.
+  Segmentation runs entirely in your browser with an on-device ML model — nothing is
+  uploaded, stored, or sent anywhere.</p>
+</header>
+
+<main>
+  <section id="drop-zone" tabindex="0" aria-label="Upload a photo">
+    <p class="big">Drop a photo here, paste one, or</p>
+    <label class="upload-btn" for="file-input">Choose a photo</label>
+    <input id="file-input" type="file" accept="image/*" hidden>
+    <p class="hint">Works best with one or more people facing the camera — great for
+    toddlers and kids. JPG, PNG, WebP.</p>
+    <p class="or">or load from a URL</p>
+    <div class="url-row">
+      <input id="url-input" type="url" placeholder="https://…/photo.jpg" aria-label="Image URL">
+      <button id="url-load" type="button" class="secondary">Load URL</button>
+    </div>
+  </section>
+
+  <section id="workbench" hidden>
+    <div class="preview-row">
+      <figure>
+        <figcaption>Original</figcaption>
+        <canvas id="source-canvas"></canvas>
+      </figure>
+      <figure>
+        <figcaption>Stickers</figcaption>
+        <div id="sticker-list"></div>
+      </figure>
+    </div>
+
+    <div id="status" role="status">Loading model…</div>
+
+    <fieldset class="controls">
+      <legend>Sticker style</legend>
+      <label>Outline width
+        <input id="outline-width" type="range" min="0" max="28" value="12" step="1">
+        <span id="outline-width-val">12px</span>
+      </label>
+      <label>Outline colour
+        <input id="outline-colour" type="color" value="#ffffff">
+      </label>
+      <label>Background
+        <select id="background">
+          <option value="transparent" selected>Transparent</option>
+          <option value="white-disc">White disc</option>
+          <option value="pastel">Pastel disc</option>
+          <option value="black-disc">Black disc</option>
+        </select>
+      </label>
+      <label class="check"><input id="shadow" type="checkbox" checked> Drop shadow</label>
+      <label class="check"><input id="smooth" type="checkbox" checked> Smooth edges</label>
+    </fieldset>
+
+    <div class="actions">
+      <button id="download-all" type="button">⬇ Download sticker sheet (PNG)</button>
+      <button id="new-photo" type="button" class="secondary">↺ New photo</button>
+    </div>
+  </section>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <ol>
+      <li><strong>Segment.</strong> A MediaPipe multiclass selfie-segmentation model
+        (hair + face) finds every head in the photo, on your device.</li>
+      <li><strong>Cut out.</strong> Each head is cut out with a soft edge, keeping
+        hair and face detail.</li>
+      <li><strong>Stickerify.</strong> A thick outline, soft shadow, and optional
+        background disc turn each cut-out into a sticker. Download one, or all
+        of them as a sheet.</li>
+    </ol>
+    <p class="note">No accounts, no servers, no tracking. If the multiclass model
+    cannot load, the app falls back to a binary person-segmentation model plus
+    face detection. This tool does not identify anyone — it only finds head
+    shapes, and it never stores a photo.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Stickerify · MIT · Built on
+  <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter">MediaPipe Image Segmenter</a>
+  (Apache-2.0). Models load from Google's CDN at runtime.</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

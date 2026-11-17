@@ -1,0 +1,77 @@
+# 🪄 Stickerify
+
+Upload a photo of people — especially toddlers and kids — and Stickerify cuts out
+every head and turns it into a sticker: thick outline, soft shadow, transparent
+background, ready to download as PNG or as a sticker sheet.
+
+## Privacy first
+
+**Your photos never leave your device.** Segmentation runs entirely in your
+browser with an on-device MediaPipe ML model. There is no server, no upload, no
+account, and no storage — close the tab and the photo is gone. This matters
+most for photos of children: nothing about them is ever sent anywhere.
+
+The tool does not identify anyone. It only finds head shapes (hair + face) and
+cuts them out.
+
+## How it works
+
+1. **Segment.** A MediaPipe multiclass selfie-segmentation model classifies each
+   pixel (background / hair / body-skin / face-skin / clothes / other). Head
+   pixels are hair + face-skin. Each separate head blob becomes its own sticker.
+2. **Cut out.** Heads are cut from the original photo with a soft, feathered edge.
+3. **Stickerify.** A dilated silhouette in your chosen outline colour, an optional
+   drop shadow, and an optional background disc turn each cut-out into a sticker.
+
+If the multiclass model cannot load, the app falls back to the binary selfie
+segmenter plus BlazeFace face detection (person mask ∩ expanded face box).
+
+> Note: on iOS Safari the GPU delegate can scramble multiclass categories, so
+> the app uses the CPU delegate throughout.
+
+## Run it
+
+No build step, no install. Serve the folder over HTTP (browsers block ES modules
+from `file://`):
+
+```bash
+python3 -m http.server 8000
+# open http://localhost:8000
+```
+
+Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
+
+## Use
+
+- Drop a photo, paste one, click **Choose a photo**, or load one from a URL.
+- Wait for the model to load on first run (~16 MB, cached afterwards).
+- Pick which heads to keep, tune outline width / colour / background / shadow.
+- Download individual stickers as PNG, or all of them at once as a sticker sheet.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `index.html` | Upload UI, controls, sticker list |
+| `styles.css` | Styling |
+| `app.js` | MediaPipe loading, segmentation, sticker rendering, UI |
+| `segmentation.js` | DOM-free mask helpers (connected components, dilation, upscaling) — unit-testable in Node |
+
+## Models (loaded at runtime from Google's CDN)
+
+- Multiclass selfie segmentation (256×256, float32, Apache-2.0):
+  `https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite`
+- Fallback binary selfie segmenter (float16, Apache-2.0) and BlazeFace
+  short-range face detector (float16, Apache-2.0)
+- Runtime: `@mediapipe/tasks-vision@0.10.14` via jsDelivr
+
+## Tests
+
+```bash
+node --check app.js && node --check segmentation.js
+node test/segmentation.test.mjs
+```
+
+## License
+
+MIT. MediaPipe models and runtime are Apache-2.0 (Google).
