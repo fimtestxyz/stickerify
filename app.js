@@ -5,6 +5,7 @@ import {
   bodyMaskFromCategories,
   groupFullBody,
 } from "./segmentation.js";
+import { exportTelegramPack, TELEGRAM_MAX_STICKERS } from "./telegram-export.js";
 
 // ---------------------------------------------------------------------------
 // Models (MediaPipe Tasks Vision, Apache-2.0). All run on-device in the
@@ -678,15 +679,40 @@ function setJobStatus(job, text) {
 // ---------------------------------------------------------------------------
 // Downloads
 // ---------------------------------------------------------------------------
-function downloadCanvas(canvas, filename) {
-  canvas.toBlob((blob) => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  }, "image/png");
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
+
+function downloadCanvas(canvas, filename) {
+  canvas.toBlob((blob) => downloadBlob(blob, filename), "image/png");
+}
+
+$("export-telegram").addEventListener("click", async () => {
+  const included = jobs.flatMap((j) => j.stickers).filter((s) => s.include);
+  if (!included.length) { setStatus("Tick at least one sticker to export."); return; }
+  const btn = $("export-telegram");
+  btn.disabled = true;
+  setStatus("Preparing your Telegram pack…");
+  try {
+    const { zipBlob, count, truncated, problems } = await exportTelegramPack(included.map((s) => s.canvas));
+    downloadBlob(zipBlob, "stickerify-telegram-pack.zip");
+    $("telegram-guide").hidden = false;
+    $("telegram-guide").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    let msg = `Telegram pack ready — ${count} sticker${count > 1 ? "s" : ""} in the ZIP. Follow the steps below to publish it with @Stickers.`;
+    if (truncated) msg += ` Only the first ${TELEGRAM_MAX_STICKERS} were included (Telegram packs hold up to ${TELEGRAM_MAX_STICKERS}).`;
+    if (problems.length) msg += ` ${problems.join(" ")}`;
+    setStatus(msg);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Telegram export failed: ${err?.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 $("download-all").addEventListener("click", () => {
   const included = jobs.flatMap((j) => j.stickers).filter((s) => s.include);

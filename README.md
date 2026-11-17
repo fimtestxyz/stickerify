@@ -58,6 +58,11 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
   falls back to processing one by one on the main thread.)
 - Pick which heads to keep, tune outline width / colour / background / shadow.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
+- **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
+  stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
+  100×100 pack icon) and shows the steps to publish it with Telegram's
+  official @Stickers bot (`/newpack` → send files as documents → one emoji
+  per sticker → `/publish`).
 
 ## Files
 
@@ -68,6 +73,8 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 | `app.js` | Model download with progress, job queue, worker pool, sticker rendering, UI |
 | `worker.js` | Segmentation worker (one per concurrent photo) |
 | `segmentation.js` | DOM-free mask helpers (connected components, dilation, upscaling) — unit-testable in Node |
+| `telegram-export.js` | Telegram pack export (512 px WebP/PNG encode, size ladder, pack icon) |
+| `zip.js` | Dependency-free ZIP writer (STORE) for the Telegram pack |
 
 ## Models (loaded at runtime from Google's CDN)
 
@@ -81,7 +88,10 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 ```bash
 node --check app.js && node --check worker.js && node --check segmentation.js
+node --check telegram-export.js && node --check zip.js
 node test/segmentation.test.mjs
+node test/zip.test.mjs
+node test/telegram-export.test.mjs
 ```
 
 ## License

@@ -133,6 +133,8 @@ button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--
 
 .how { margin-bottom: 32px; }
 .how h2 { margin-bottom: 6px; }
+.how code { background: #f0e9dd; padding: 1px 6px; border-radius: 6px; font-size: 0.9em; }
+button:disabled { opacity: 0.5; cursor: default; }
 .note { color: #6d675e; font-size: 0.92rem; }
 footer { padding-bottom: 32px; color: #6d675e; font-size: 0.88rem; }
 footer a { color: inherit; }
