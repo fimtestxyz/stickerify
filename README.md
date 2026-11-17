@@ -65,6 +65,11 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
   OpenMoji release on the jsDelivr CDN, cached, and drawn onto every head.
   Several props can be on at once; they stack with costumes, and they travel
   into the Telegram export too. Props apply to Head only stickers.
+- Search for more stickers live: type a word in the Props search box and it
+  queries the Iconify API (200+ open icon sets, no key, no scraping) and
+  shows matching SVGs — pick a placement (on top / eyes / ears / side /
+  above) and tap one to add it to the Props row. Added stickers behave like
+  the built-ins: they stack, follow the head, and export to Telegram.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
 - **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
   stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
@@ -85,6 +90,7 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 | `zip.js` | Dependency-free ZIP writer (STORE) for the Telegram pack |
 | `costumes.js` | Cartoon body costumes (vector-drawn, no image assets) |
 | `props.js` | Live OpenMoji props: list, head placement math, CDN fetch + cache |
+| `iconify.js` | Live Iconify search: keyword search + SVG fetch over 200+ open sets |
 
 ## Models (loaded at runtime from Google's CDN)
 
@@ -105,6 +111,7 @@ node test/zip.test.mjs
 node test/telegram-export.test.mjs
 node test/costumes.test.mjs
 node test/props.test.mjs
+node test/iconify.test.mjs
 ```
 
 Props use [OpenMoji](https://openmoji.org) emoji, licensed CC-BY-SA 4.0, fetched
@@ -112,6 +119,11 @@ live from the jsDelivr CDN (see `props.js`). To add a prop, add one line to
 `PROPS` in `props.js` with the emoji's codepoint, name, character, anchor
 (`top` / `eyes` / `ears` / `side` / `above`) and scale — no other code changes
 needed.
+
+Search results come from the [Iconify API](https://iconify.design) (see
+`iconify.js`); each icon keeps its own open licence. Flaticon is deliberately
+not scraped: its pages block automated fetching and its terms forbid it — its
+art is available through Flaticon's official API with an API key instead.
 
 ## License
 

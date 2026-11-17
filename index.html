@@ -80,6 +80,19 @@
         <span class="hint" id="props-hint"></span>
         <span class="hint">Props: <a href="https://openmoji.org" target="_blank" rel="noopener">OpenMoji</a> (CC-BY-SA 4.0), loaded live.</span>
       </div>
+      <div class="iconify-search">
+        <input id="iconify-query" type="search" placeholder="Search more stickers… e.g. dinosaur, rocket" aria-label="Search Iconify stickers">
+        <select id="iconify-anchor" aria-label="Where the sticker sits on the head">
+          <option value="top" selected>On top</option>
+          <option value="eyes">On eyes</option>
+          <option value="ears">On ears</option>
+          <option value="side">On the side</option>
+          <option value="above">Above</option>
+        </select>
+        <button type="button" id="iconify-go" class="secondary">Search</button>
+      </div>
+      <div class="iconify-results" id="iconify-results"></div>
+      <span class="hint">Search: <a href="https://iconify.design" target="_blank" rel="noopener">Iconify</a> — 200+ open icon sets, each under its own open licence. Tap a result to add it to the props above.</span>
     </fieldset>
 
     <div id="jobs"></div>

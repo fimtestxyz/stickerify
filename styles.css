@@ -163,3 +163,13 @@ footer a { color: inherit; }
 #props-wrap.disabled { opacity: 0.45; }
 #props-wrap.disabled .prop-btn { pointer-events: none; }
 .props-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.iconify-search { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 8px; }
+.iconify-search input[type="search"] {
+  flex: 1; min-width: 200px;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+  font: inherit; background: #fff;
+}
+.iconify-search select { padding: 8px; border-radius: 8px; border: 1px solid var(--line); font: inherit; background: #fff; }
+.iconify-results { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; color: #6d675e; }
+.iconify-results .p-img { width: 36px; height: 36px; }

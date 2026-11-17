@@ -29,7 +29,7 @@ export const PROPS = [
   { code: "1F576", name: "Sunglasses", char: "🕶️", anchor: "eyes", scale: 0.95 },
   { code: "1F453", name: "Glasses", char: "👓", anchor: "eyes", scale: 0.9 },
   { code: "1F97D", name: "Goggles", char: "🥽", anchor: "eyes", scale: 0.95 },
-  { code: "1F3A7", name: "Headphones", char: "🎧", anchor: "ears", scale: 1.2 },
+  { code: "1F3A7", name: "Headphones", char: "🎧", anchor: "ears", scale: 1.05 },
   { code: "1F380", name: "Bow", char: "🎀", anchor: "side", scale: 0.45, cx: 0.84, cy: 0.1 },
   { code: "1F33A", name: "Flower", char: "🌺", anchor: "side", scale: 0.4, cx: 0.84, cy: 0.1 },
   { code: "1F4A1", name: "Light bulb", char: "💡", anchor: "above", scale: 0.5 },
@@ -70,6 +70,17 @@ export function propDrawRect(prop, art, head, imgW, imgH) {
     }
   }
   return { x: ax - art.x * s, y: ay - art.y * s, w: dw, h: dh };
+}
+
+/**
+ * Draw order for stacked props, so later layers sit on top of earlier ones
+ * the way they would in real life: headphones under glasses, and hats and
+ * crowns on top of everything (a headphone band must not cross a crown).
+ */
+const DRAW_ORDER = { ears: 0, eyes: 1, side: 2, above: 3, top: 4 };
+
+export function sortPropsForDrawing(list) {
+  return [...list].sort((a, b) => (DRAW_ORDER[a.anchor] ?? 9) - (DRAW_ORDER[b.anchor] ?? 9));
 }
 
 /** Fetch one prop's SVG text, via the Cache API when available. */

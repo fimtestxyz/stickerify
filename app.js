@@ -7,7 +7,8 @@ import {
 } from "./segmentation.js";
 import { exportTelegramPack, TELEGRAM_MAX_STICKERS } from "./telegram-export.js";
 import { COSTUMES } from "./costumes.js";
-import { PROPS, propSvgUrl, propDrawRect, fetchPropSvg } from "./props.js";
+import { PROPS, propSvgUrl, propDrawRect, sortPropsForDrawing, fetchPropSvg } from "./props.js";
+import { searchIconify, fetchIconifySvg, iconifySvgUrl, iconLabel, sortSearchResults } from "./iconify.js";
 
 // ---------------------------------------------------------------------------
 // Models (MediaPipe Tasks Vision, Apache-2.0). All run on-device in the
@@ -41,9 +42,25 @@ let jobs = []; // {id, name, file, img, status, statusText, width, height, categ
 let jobSeq = 0;
 let segmentMode = "head"; // "head" | "full" — what to cut out
 let costumeId = "none"; // costume applied to head stickers (head mode only)
-const activeProps = new Set(); // OpenMoji prop codes applied to head stickers
-const propImages = new Map(); // code -> {img, art} (loaded SVG, measured art bbox)
-const propLoading = new Map(); // code -> Promise<boolean>
+const activeProps = new Set(); // prop ids applied to head stickers
+const propImages = new Map(); // id -> {img, art} (loaded SVG, measured art bbox)
+const propLoading = new Map(); // id -> Promise<boolean>
+const customProps = new Map(); // id ("iconify:openmoji:crown") -> prop def, from Iconify search
+
+/** Prop definition by id: a built-in OpenMoji prop, or a custom Iconify one. */
+function findPropDef(id) {
+  return PROPS.find((p) => p.code === id) || customProps.get(id);
+}
+
+/** Thumbnail URL for a prop button. */
+function propThumbUrl(def) {
+  return def.code.startsWith("iconify:")
+    ? iconifySvgUrl(def.code.slice("iconify:".length))
+    : propSvgUrl(def.code);
+}
+
+/** Default size per placement, as a fraction of head width. */
+const ANCHOR_DEFAULTS = { top: 0.9, eyes: 0.95, ears: 1.05, side: 0.45, above: 0.5 };
 let pool = null;      // [{worker, busy}] once initialised
 let poolFailed = false;
 let poolError = "";   // why the pool failed, shown to the user
@@ -535,9 +552,9 @@ function renderSticker(job, seg) {
   // Costumes and props dress up heads only; full-body stickers render as normal.
   const costume = segmentMode === "head" ? COSTUMES.find((c) => c.id === costumeId) || null : null;
   const props = segmentMode === "head"
-    ? [...activeProps]
-        .map((code) => ({ def: PROPS.find((p) => p.code === code), rec: propImages.get(code) }))
-        .filter((p) => p.def && p.rec)
+    ? sortPropsForDrawing([...activeProps]
+        .map((id) => ({ def: findPropDef(id), rec: propImages.get(id) }))
+        .filter((p) => p.def && p.rec))
     : [];
   const hasExtras = costume || props.length > 0;
   const outline = parseInt($("outline-width").value, 10);
@@ -718,7 +735,7 @@ function renderJobStickers(job) {
     dl.type = "button";
     dl.className = "dl";
     dl.textContent = "Download PNG";
-    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}${costumeId !== "none" && segmentMode === "head" ? `-${costumeId}` : ""}${segmentMode === "head" && activeProps.size ? "-" + [...activeProps].map((code) => PROPS.find((p) => p.code === code)?.name.toLowerCase().replace(/\s+/g, "-")).filter(Boolean).join("-") : ""}.png`));
+    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}${costumeId !== "none" && segmentMode === "head" ? `-${costumeId}` : ""}${segmentMode === "head" && activeProps.size ? "-" + [...activeProps].map((id) => findPropDef(id)?.name.toLowerCase().replace(/\s+/g, "-")).filter(Boolean).join("-") : ""}.png`));
     card.append(img, label, dl);
     list.appendChild(card);
   });
@@ -934,69 +951,73 @@ function measureArt(img) {
 }
 
 /** Fetch one prop's SVG (live, cached) and turn it into a canvas image. */
-async function ensurePropLoaded(code) {
-  if (propImages.has(code)) return true;
-  if (propLoading.has(code)) return propLoading.get(code);
+async function ensurePropLoaded(id) {
+  if (propImages.has(id)) return true;
+  if (propLoading.has(id)) return propLoading.get(id);
   const p = (async () => {
     try {
-      const svgText = await fetchPropSvg(code);
+      const svgText = id.startsWith("iconify:")
+        ? await fetchIconifySvg(id.slice("iconify:".length))
+        : await fetchPropSvg(id);
       const blob = new Blob([svgText], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       const img = new Image();
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
-      propImages.set(code, { img, art: measureArt(img) });
+      propImages.set(id, { img, art: measureArt(img) });
       return true;
     } catch (e) {
-      console.warn("prop failed to load", code, e);
+      console.warn("prop failed to load", id, e);
       return false;
     } finally {
-      propLoading.delete(code);
+      propLoading.delete(id);
     }
   })();
-  propLoading.set(code, p);
+  propLoading.set(id, p);
   return p;
 }
 
-// Props gallery: one toggle button per OpenMoji prop. The button shows the
-// emoji character until its live SVG thumbnail loads, then swaps to that.
-const propsRow = $("props-row");
-for (const prop of PROPS) {
+// Props gallery: one toggle button per prop. The button shows the emoji
+// character until its live SVG thumbnail loads, then swaps to that.
+function createPropButton(def) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "prop-btn";
-  btn.dataset.code = prop.code;
-  btn.title = prop.name;
-  btn.setAttribute("aria-label", `Add ${prop.name} prop`);
+  btn.dataset.code = def.code;
+  btn.title = def.name;
+  btn.setAttribute("aria-label", `Add ${def.name} prop`);
   const char = document.createElement("span");
   char.className = "p-char";
-  char.textContent = prop.char;
+  char.textContent = def.char;
   const thumb = document.createElement("img");
   thumb.className = "p-img";
-  thumb.alt = prop.name;
+  thumb.alt = def.name;
   thumb.hidden = true;
-  thumb.src = propSvgUrl(prop.code);
+  thumb.src = propThumbUrl(def);
   thumb.addEventListener("load", () => { thumb.hidden = false; char.hidden = true; });
   btn.append(char, thumb);
-  btn.addEventListener("click", () => toggleProp(prop.code, btn));
-  propsRow.append(btn);
+  btn.addEventListener("click", () => toggleProp(def.code, btn));
+  return btn;
 }
 
-async function toggleProp(code, btn) {
-  const prop = PROPS.find((p) => p.code === code);
-  if (activeProps.has(code)) {
-    activeProps.delete(code);
+const propsRow = $("props-row");
+for (const prop of PROPS) propsRow.append(createPropButton(prop));
+
+async function toggleProp(id, btn) {
+  const prop = findPropDef(id);
+  if (activeProps.has(id)) {
+    activeProps.delete(id);
     btn.classList.remove("on");
     renderAllStickers();
     return;
   }
   btn.classList.add("loading");
-  const ok = await ensurePropLoaded(code);
+  const ok = await ensurePropLoaded(id);
   btn.classList.remove("loading");
   if (!ok) {
-    setStatus(`Couldn't load the ${prop.name} prop — check your connection and try again.`);
+    setStatus(`Couldn't load the ${prop?.name || "prop"} — check your connection and try again.`);
     return;
   }
-  activeProps.add(code);
+  activeProps.add(id);
   btn.classList.add("on");
   renderAllStickers();
 }
@@ -1006,6 +1027,68 @@ $("props-none").addEventListener("click", () => {
   document.querySelectorAll(".prop-btn.on").forEach((b) => b.classList.remove("on"));
   renderAllStickers();
 });
+
+// Iconify search: find any open sticker by keyword, add it as a custom prop.
+// The placement selector decides where it sits on the head.
+let searchTimer = null;
+$("iconify-go").addEventListener("click", runIconifySearch);
+$("iconify-query").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runIconifySearch, 500);
+});
+
+async function runIconifySearch() {
+  const q = $("iconify-query").value.trim();
+  const box = $("iconify-results");
+  if (q.length < 2) { box.replaceChildren(); return; }
+  box.textContent = "Searching…";
+  try {
+    const icons = sortSearchResults(await searchIconify(q, 24)).slice(0, 12);
+    box.replaceChildren();
+    if (!icons.length) {
+      box.textContent = "No stickers found — try another word.";
+      return;
+    }
+    for (const icon of icons) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "prop-btn iconify-result";
+      btn.title = iconLabel(icon);
+      btn.setAttribute("aria-label", `Add ${iconLabel(icon)} sticker`);
+      const img = document.createElement("img");
+      img.className = "p-img";
+      img.alt = iconLabel(icon);
+      img.src = iconifySvgUrl(icon);
+      btn.append(img);
+      btn.addEventListener("click", () => addCustomProp(icon));
+      box.append(btn);
+    }
+  } catch (e) {
+    box.textContent = "Search failed — check your connection and try again.";
+    console.warn("iconify search failed", e);
+  }
+}
+
+async function addCustomProp(icon) {
+  const id = `iconify:${icon}`;
+  const anchor = $("iconify-anchor").value;
+  if (!customProps.has(id)) {
+    customProps.set(id, {
+      code: id,
+      name: iconLabel(icon),
+      char: "✦",
+      anchor,
+      scale: ANCHOR_DEFAULTS[anchor] ?? 0.9,
+    });
+  }
+  let rowBtn = propsRow.querySelector(`[data-code="${CSS.escape(id)}"]`);
+  if (!rowBtn) {
+    rowBtn = createPropButton(customProps.get(id));
+    propsRow.append(rowBtn);
+  }
+  if (!activeProps.has(id)) await toggleProp(id, rowBtn);
+}
+
 syncExtrasControl();
 
 // Re-render stickers when style controls change (debounced).

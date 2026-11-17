@@ -2,7 +2,7 @@
 // fetch goes through a stub so no network is needed.
 // Run: node test/props.test.mjs
 import assert from "node:assert";
-import { PROPS, propSvgUrl, propDrawRect, fetchPropSvg, OPENMOJI_VERSION } from "../props.js";
+import { PROPS, propSvgUrl, propDrawRect, sortPropsForDrawing, fetchPropSvg, OPENMOJI_VERSION } from "../props.js";
 
 const ANCHORS = new Set(["top", "eyes", "ears", "side", "above"]);
 
@@ -69,6 +69,15 @@ function artBox(rect, s) {
   const box = artBox(r, s);
   assert.ok(box.cy < HEAD.y, "bulb floats above the head");
   assert.ok(approx(box.cx, HEAD.x + HEAD.w / 2), "bulb centred on the head");
+}
+
+// Draw order: headphones under glasses, hats and crowns on top.
+{
+  const crown = PROPS.find((p) => p.code === "1F451");
+  const glasses = PROPS.find((p) => p.code === "1F576");
+  const phones = PROPS.find((p) => p.code === "1F3A7");
+  const sorted = sortPropsForDrawing([crown, glasses, phones]);
+  assert.deepEqual(sorted.map((p) => p.code), ["1F3A7", "1F576", "1F451"]);
 }
 
 // Fetch through a stub (no network, no Cache API in Node).
