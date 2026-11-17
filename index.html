@@ -16,35 +16,31 @@
 </header>
 
 <main>
-  <section id="drop-zone" tabindex="0" aria-label="Upload a photo">
-    <p class="big">Drop a photo here, paste one, or</p>
-    <label class="upload-btn" for="file-input">Choose a photo</label>
-    <input id="file-input" type="file" accept="image/*" hidden>
-    <p class="hint">Works best with one or more people facing the camera — great for
+  <section id="drop-zone" tabindex="0" aria-label="Upload photos">
+    <p class="big">Drop photos here, paste them, or</p>
+    <label class="upload-btn" for="file-input">Choose photos</label>
+    <input id="file-input" type="file" accept="image/*" multiple hidden>
+    <p class="hint">Upload as many as you like — they are processed in parallel, a few at
+    a time. Works best with one or more people facing the camera — great for
     toddlers and kids. JPG, PNG, WebP.</p>
-    <p class="or">or load from a URL</p>
+    <p class="or">or load from URLs (one per line)</p>
     <div class="url-row">
-      <input id="url-input" type="url" placeholder="https://…/photo.jpg" aria-label="Image URL">
-      <button id="url-load" type="button" class="secondary">Load URL</button>
+      <textarea id="url-input" rows="2" placeholder="https://…/photo1.jpg&#10;https://…/photo2.jpg" aria-label="Image URLs, one per line"></textarea>
+      <button id="url-load" type="button" class="secondary">Load URLs</button>
     </div>
   </section>
 
-  <section id="workbench" hidden>
-    <div class="preview-row">
-      <figure>
-        <figcaption>Original</figcaption>
-        <canvas id="source-canvas"></canvas>
-      </figure>
-      <figure>
-        <figcaption>Stickers</figcaption>
-        <div id="sticker-list"></div>
-      </figure>
-    </div>
+  <div id="model-progress" hidden>
+    <div id="model-progress-label">Downloading segmentation model…</div>
+    <progress id="model-progress-bar" max="100" value="0"></progress>
+    <span id="model-progress-text"></span>
+  </div>
 
-    <div id="status" role="status">Loading model…</div>
+  <section id="workbench" hidden>
+    <div id="status" role="status"></div>
 
     <fieldset class="controls">
-      <legend>Sticker style</legend>
+      <legend>Sticker style (applies to all photos)</legend>
       <label>Outline width
         <input id="outline-width" type="range" min="0" max="28" value="12" step="1">
         <span id="outline-width-val">12px</span>
@@ -64,9 +60,11 @@
       <label class="check"><input id="smooth" type="checkbox" checked> Smooth edges</label>
     </fieldset>
 
+    <div id="jobs"></div>
+
     <div class="actions">
-      <button id="download-all" type="button">⬇ Download sticker sheet (PNG)</button>
-      <button id="new-photo" type="button" class="secondary">↺ New photo</button>
+      <button id="download-all" type="button">⬇ Download all stickers as a sheet (PNG)</button>
+      <button id="new-photo" type="button" class="secondary">↺ New batch</button>
     </div>
   </section>
 
@@ -74,7 +72,11 @@
     <h2>How it works</h2>
     <ol>
       <li><strong>Segment.</strong> A MediaPipe multiclass selfie-segmentation model
-        (hair + face) finds every head in the photo, on your device.</li>
+        (hair + face) finds every head in the photo, on your device. The model
+        downloads once (~16 MB) with a progress bar, then stays cached.</li>
+      <li><strong>Batch.</strong> Drop in as many photos as you like — up to three
+        are segmented at the same time in background workers, each with its own
+        status.</li>
       <li><strong>Cut out.</strong> Each head is cut out with a soft edge, keeping
         hair and face detail.</li>
       <li><strong>Stickerify.</strong> A thick outline, soft shadow, and optional

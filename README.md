@@ -43,8 +43,13 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 ## Use
 
-- Drop a photo, paste one, click **Choose a photo**, or load one from a URL.
-- Wait for the model to load on first run (~16 MB, cached afterwards).
+- Drop in one or many photos, paste them, click **Choose photos**, or load
+  from URLs (one per line).
+- The segmentation model downloads once (~16 MB) with a live progress bar,
+  then stays cached in the browser — repeat visits start instantly.
+- Photos are processed in parallel — up to three at a time in background
+  workers, each with its own status. (If workers are unavailable, the app
+  falls back to processing one by one on the main thread.)
 - Pick which heads to keep, tune outline width / colour / background / shadow.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
 
@@ -52,9 +57,10 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 | File | What it is |
 | --- | --- |
-| `index.html` | Upload UI, controls, sticker list |
+| `index.html` | Upload UI, controls, job list |
 | `styles.css` | Styling |
-| `app.js` | MediaPipe loading, segmentation, sticker rendering, UI |
+| `app.js` | Model download with progress, job queue, worker pool, sticker rendering, UI |
+| `worker.js` | Segmentation worker (one per concurrent photo) |
 | `segmentation.js` | DOM-free mask helpers (connected components, dilation, upscaling) — unit-testable in Node |
 
 ## Models (loaded at runtime from Google's CDN)
@@ -68,7 +74,7 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 ## Tests
 
 ```bash
-node --check app.js && node --check segmentation.js
+node --check app.js && node --check worker.js && node --check segmentation.js
 node test/segmentation.test.mjs
 ```
 

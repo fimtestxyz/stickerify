@@ -18,51 +18,190 @@ const SELFIE_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
 const FACE_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite";
+const CACHE_NAME = "stickerify-v1";
 
 const MAX_WORK_DIM = 1200; // working canvas size (keeps segmentation fast)
 const MIN_HEAD_PX = 400;   // ignore head blobs smaller than this (at work size)
+const POOL_SIZE = Math.min(3, navigator.hardwareConcurrency || 2);
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const sourceCanvas = $("source-canvas");
-const stickerList = $("sticker-list");
+const jobsEl = $("jobs");
+const progressBox = $("model-progress");
+const progressLabel = $("model-progress-label");
+const progressBar = $("model-progress-bar");
+const progressText = $("model-progress-text");
 
-let vision = null;
-let segmenter = null;      // multiclass (hair + face) segmenter
-let fallback = null;       // { segmenter, faceDetector } — used only if needed
-let currentImage = null;   // HTMLImageElement
-let heads = [];            // [{ bbox, mask, name }] at work-canvas resolution
-let stickers = [];         // [{ canvas, name, include }]
+let jobs = []; // {id, name, file, img, status, statusText, width, height, heads, workCanvas, stickers, error}
+let jobSeq = 0;
+let pool = null;      // [{worker, busy}] once initialised
+let poolFailed = false;
+let modelBlobUrl = null;
+let fallback = null;  // { segmenter, faceDetector } — main-thread fallback
 
 const setStatus = (msg) => { statusEl.textContent = msg; };
+const fmtMB = (n) => `${(n / 1048576).toFixed(1)} MB`;
 
-// ---------------------------------------------------------------------------
-// Model loading
-// ---------------------------------------------------------------------------
-async function loadVision() {
-  if (vision) return vision;
-  const { FilesetResolver } = await import(VISION_BUNDLE_URL);
-  vision = await FilesetResolver.forVisionTasks(VISION_WASM_URL);
-  return vision;
+function computeWorkSize(naturalW, naturalH) {
+  const scale = Math.min(1, MAX_WORK_DIM / Math.max(naturalW, naturalH));
+  return {
+    w: Math.max(1, Math.round(naturalW * scale)),
+    h: Math.max(1, Math.round(naturalH * scale)),
+  };
 }
 
-async function loadSegmenter() {
-  if (segmenter) return segmenter;
+// ---------------------------------------------------------------------------
+// Model download with live progress (fetch + Cache API)
+// ---------------------------------------------------------------------------
+function showProgress(label, loaded, total) {
+  progressBox.hidden = false;
+  progressLabel.textContent = label;
+  if (total > 0) {
+    progressBar.max = 100;
+    progressBar.value = Math.round((loaded / total) * 100);
+    progressText.textContent = `${Math.round((loaded / total) * 100)}% · ${fmtMB(loaded)} / ${fmtMB(total)}`;
+  } else if (loaded > 0) {
+    progressBar.removeAttribute("value");
+    progressText.textContent = fmtMB(loaded);
+  } else {
+    // Indeterminate phase (runtime load, warm-up, …).
+    progressBar.removeAttribute("value");
+    progressText.textContent = "";
+  }
+}
+
+function hideProgress() { progressBox.hidden = true; }
+
+/** Download the model with progress, caching it so repeat visits skip the download. Returns a blob: URL. */
+async function fetchModelBlobWithProgress(url, onProgress) {
+  let cache = null;
+  try { cache = await caches.open(CACHE_NAME); } catch { /* Cache API unavailable — download directly. */ }
+  if (cache) {
+    const hit = await cache.match(url);
+    if (hit) {
+      onProgress(-1, -1); // cached: no download needed
+      return URL.createObjectURL(await hit.blob());
+    }
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Model download failed (HTTP ${res.status})`);
+  const total = Number(res.headers.get("Content-Length") || 0);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    onProgress(loaded, total);
+  }
+  const blob = new Blob(chunks);
+  if (cache) { try { await cache.put(url, new Response(blob)); } catch { /* non-fatal */ } }
+  return URL.createObjectURL(blob);
+}
+
+async function loadVision() {
+  const { FilesetResolver } = await import(VISION_BUNDLE_URL);
+  return FilesetResolver.forVisionTasks(VISION_WASM_URL);
+}
+
+// ---------------------------------------------------------------------------
+// Worker pool (true concurrent batch processing)
+// ---------------------------------------------------------------------------
+let poolInitPromise = null;
+
+async function ensurePool() {
+  if (pool) return true;
+  if (poolFailed) return false;
+  if (!poolInitPromise) poolInitPromise = initPool();
+  return poolInitPromise;
+}
+
+async function initPool() {
+  try {
+    showProgress("Downloading segmentation model…", 0, 0);
+    modelBlobUrl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
+      if (loaded < 0) {
+        showProgress("Model cached — starting workers…", 0, 0);
+      } else {
+        showProgress("Downloading segmentation model…", loaded, total);
+      }
+    });
+    showProgress("Starting workers…", 0, 0);
+    const workers = [];
+    for (let i = 0; i < POOL_SIZE; i++) {
+      const worker = new Worker("./worker.js", { type: "module" });
+      workers.push({ worker, busy: false, ready: false });
+    }
+    const ready = await Promise.all(workers.map((w) => new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 60000);
+      w.worker.onmessage = (e) => {
+        if (e.data.type === "ready") { w.ready = true; clearTimeout(timer); resolve(true); }
+        else if (e.data.type === "error") { clearTimeout(timer); resolve(false); }
+        else handleWorkerMessage(w, e.data);
+      };
+      w.worker.onerror = () => { clearTimeout(timer); resolve(false); };
+      w.worker.postMessage({ type: "init" });
+    })));
+    pool = workers.filter((w, i) => ready[i]);
+    if (!pool.length) throw new Error("No workers became ready");
+    hideProgress();
+    return true;
+  } catch (err) {
+    console.warn("Worker pool unavailable, falling back to main-thread processing:", err);
+    poolFailed = true;
+    hideProgress();
+    return false;
+  }
+}
+
+function handleWorkerMessage(w, data) {
+  const job = jobs.find((j) => j.id === data.id);
+  if (!job) { w.busy = false; return; }
+  w.busy = false;
+  if (data.type === "done") {
+    job.width = data.width;
+    job.height = data.height;
+    job.heads = data.heads;
+    finishJob(job);
+  } else if (data.type === "error") {
+    console.warn(`Worker failed on ${job.name}, retrying on main thread:`, data.error);
+    job.status = "queued";
+    job.retried = true;
+    setJobStatus(job, "Worker failed — retrying…");
+    processOnMainThread(job).finally(pumpQueue);
+  }
+  pumpQueue();
+}
+
+// ---------------------------------------------------------------------------
+// Main-thread fallback (single segmenter, then binary + face detection)
+// ---------------------------------------------------------------------------
+async function loadMainSegmenter() {
   const { ImageSegmenter } = await import(VISION_BUNDLE_URL);
-  await loadVision();
-  segmenter = await ImageSegmenter.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: MULTICLASS_MODEL_URL, delegate: "CPU" },
+  const vision = await loadVision();
+  if (!modelBlobUrl) {
+    showProgress("Downloading segmentation model…", 0, 0);
+    modelBlobUrl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
+      if (loaded < 0) showProgress("Model cached — warming up…", 0, 0);
+      else showProgress("Downloading segmentation model…", loaded, total);
+    });
+  }
+  const segmenter = await ImageSegmenter.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: modelBlobUrl, delegate: "CPU" },
     runningMode: "IMAGE",
     outputCategoryMask: true,
     outputConfidenceMasks: false,
   });
+  hideProgress();
   return segmenter;
 }
 
-async function loadFallback() {
+async function loadFallbackModels() {
   if (fallback) return fallback;
   const { ImageSegmenter, FaceDetector } = await import(VISION_BUNDLE_URL);
-  await loadVision();
+  const vision = await loadVision();
   const seg = await ImageSegmenter.createFromOptions(vision, {
     baseOptions: { modelAssetPath: SELFIE_MODEL_URL, delegate: "CPU" },
     runningMode: "IMAGE",
@@ -77,110 +216,40 @@ async function loadFallback() {
   return fallback;
 }
 
-// ---------------------------------------------------------------------------
-// Image intake
-// ---------------------------------------------------------------------------
-function loadFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
-    setStatus("That doesn't look like an image — try a JPG, PNG, or WebP photo.");
-    return;
-  }
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    URL.revokeObjectURL(url);
-    currentImage = img;
-    processPhoto();
-  };
-  img.onerror = () => setStatus("Could not read that image. Try another file.");
-  img.src = url;
-}
+let mainSegmenter = null;
 
-$("file-input").addEventListener("change", (e) => loadFile(e.target.files[0]));
-
-async function loadFromUrl(url) {
-  setStatus("Fetching photo…");
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const blob = await res.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("not an image");
-  loadFile(new File([blob], "photo", { type: blob.type }));
-}
-$("url-load").addEventListener("click", async () => {
-  const url = $("url-input").value.trim();
-  if (!url) return;
+async function segmentOnMainThread(job) {
+  const { w, h } = computeWorkSize(job.img.naturalWidth, job.img.naturalHeight);
+  const canvas = drawWorkCanvas(job, w, h);
   try {
-    await loadFromUrl(url);
+    if (!mainSegmenter) mainSegmenter = await loadMainSegmenter();
+    const result = mainSegmenter.segment(canvas);
+    const maskImg = result.categoryMask;
+    const head = headMaskFromCategories(maskImg.getAsUint8Array());
+    const full = upscaleNearest(head, maskImg.width, maskImg.height, w, h);
+    return { width: w, height: h, heads: componentsToHeads(full, w, h) };
   } catch (err) {
-    console.warn(err);
-    setStatus("Could not fetch that URL — the host may block cross-origin reads. Download the photo and upload it instead.");
-  }
-});
-
-const dropZone = $("drop-zone");
-dropZone.addEventListener("click", () => $("file-input").click());
-dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag"); });
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
-dropZone.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dropZone.classList.remove("drag");
-  loadFile(e.dataTransfer.files[0]);
-});
-document.addEventListener("paste", (e) => {
-  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
-  if (item) loadFile(item.getAsFile());
-});
-
-// ---------------------------------------------------------------------------
-// Segmentation: find head masks at working resolution
-// ---------------------------------------------------------------------------
-function drawImageToWorkCanvas(img) {
-  const scale = Math.min(1, MAX_WORK_DIM / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.max(1, Math.round(img.naturalWidth * scale));
-  const h = Math.max(1, Math.round(img.naturalHeight * scale));
-  sourceCanvas.width = w;
-  sourceCanvas.height = h;
-  const ctx = sourceCanvas.getContext("2d");
-  ctx.drawImage(img, 0, 0, w, h);
-  return { w, h };
-}
-
-async function findHeads(canvas, w, h) {
-  // Primary: multiclass model — head = hair + face-skin categories.
-  try {
-    const seg = await loadSegmenter();
+    console.warn("Multiclass segmentation failed, trying binary + face fallback:", err);
+    const { segmenter: seg, faceDetector: det } = await loadFallbackModels();
     const result = seg.segment(canvas);
     const maskImg = result.categoryMask;
-    const mw = maskImg.width, mh = maskImg.height;
-    const cats = maskImg.getAsUint8Array();
-    const head = headMaskFromCategories(cats);
-    const full = upscaleNearest(head, mw, mh, w, h);
-    return componentsToHeads(full, w, h);
-  } catch (err) {
-    console.warn("Multiclass segmentation failed, trying fallback:", err);
-  }
-  // Fallback: binary person mask + face boxes.
-  const { segmenter: seg, faceDetector: det } = await loadFallback();
-  const result = seg.segment(canvas);
-  const maskImg = result.categoryMask;
-  const person = upscaleNearest(maskImg.getAsUint8Array(), maskImg.width, maskImg.height, w, h);
-  const detections = det.detect(canvas).detections || [];
-  const headsOut = [];
-  for (const d of detections) {
-    const b = d.boundingBox;
-    const x0 = Math.max(0, Math.floor(b.originX - b.width * 0.35));
-    const y0 = Math.max(0, Math.floor(b.originY - b.height * 0.6));
-    const x1 = Math.min(w, Math.ceil(b.originX + b.width * 1.35));
-    const y1 = Math.min(h, Math.ceil(b.originY + b.height * 1.4));
-    const mask = new Uint8Array(w * h);
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        if (person[y * w + x]) mask[y * w + x] = 1;
+    const person = upscaleNearest(maskImg.getAsUint8Array(), maskImg.width, maskImg.height, w, h);
+    const detections = det.detect(canvas).detections || [];
+    const heads = [];
+    for (const d of detections) {
+      const b = d.boundingBox;
+      const x0 = Math.max(0, Math.floor(b.originX - b.width * 0.35));
+      const y0 = Math.max(0, Math.floor(b.originY - b.height * 0.6));
+      const x1 = Math.min(w, Math.ceil(b.originX + b.width * 1.35));
+      const y1 = Math.min(h, Math.ceil(b.originY + b.height * 1.4));
+      const mask = new Uint8Array(w * h);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) if (person[y * w + x]) mask[y * w + x] = 1;
       }
+      heads.push({ bbox: { minX: x0, minY: y0, maxX: x1 - 1, maxY: y1 - 1 }, mask });
     }
-    headsOut.push({ bbox: { minX: x0, minY: y0, maxX: x1 - 1, maxY: y1 - 1 }, mask });
+    return { width: w, height: h, heads: heads.filter((hd) => countOnes(hd.mask) >= MIN_HEAD_PX) };
   }
-  return headsOut.filter((hd) => countOnes(hd.mask) >= MIN_HEAD_PX);
 }
 
 function componentsToHeads(mask, w, h) {
@@ -199,10 +268,144 @@ function countOnes(mask) {
 }
 
 // ---------------------------------------------------------------------------
-// Sticker rendering
+// Job queue
+// ---------------------------------------------------------------------------
+function drawWorkCanvas(job, w, h) {
+  if (job.workCanvas && job.workCanvas.width === w) return job.workCanvas;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d").drawImage(job.img, 0, 0, w, h);
+  job.workCanvas = canvas;
+  return canvas;
+}
+
+function addFiles(files) {
+  const images = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!images.length) {
+    setStatus("That doesn't look like an image — try JPG, PNG, or WebP photos.");
+    return;
+  }
+  $("workbench").hidden = false;
+  for (const file of images) {
+    const job = {
+      id: ++jobSeq,
+      name: file.name || `Photo ${jobSeq}`,
+      file,
+      img: null,
+      status: "queued",
+      heads: [],
+      stickers: [],
+    };
+    jobs.push(job);
+    renderJobCard(job);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      job.img = img;
+      setJobStatus(job, "Queued");
+      pumpQueue();
+    };
+    img.onerror = () => {
+      job.status = "failed";
+      setJobStatus(job, "Could not read this image.");
+      updateSummary();
+    };
+    img.src = url;
+  }
+  updateSummary();
+  processQueue();
+}
+
+let fallbackRunning = false;
+
+async function processQueue() {
+  const ok = await ensurePool();
+  if (!ok) {
+    // Sequential main-thread fallback.
+    if (fallbackRunning) return;
+    fallbackRunning = true;
+    setStatus("Workers unavailable — processing photos one by one on the main thread.");
+    try {
+      for (const job of jobs.filter((j) => j.status === "queued" && j.img)) {
+        await processOnMainThread(job);
+      }
+    } finally {
+      fallbackRunning = false;
+    }
+    updateSummary();
+  }
+  pumpQueue();
+}
+
+function pumpQueue() {
+  if (!pool) return;
+  for (const job of jobs) {
+    if (job.status !== "queued" || !job.img) continue;
+    const w = pool.find((x) => !x.busy && x.ready);
+    if (!w) return;
+    w.busy = true;
+    job.status = "processing";
+    job.worker = w;
+    setJobStatus(job, "Segmenting…");
+    createImageBitmap(job.file)
+      .then((bitmap) => w.worker.postMessage({ type: "segment", id: job.id, bitmap }, [bitmap]))
+      .catch((err) => {
+        w.busy = false;
+        console.warn(`Could not hand ${job.name} to a worker:`, err);
+        job.status = "queued";
+        processOnMainThread(job).finally(pumpQueue);
+      });
+  }
+}
+
+async function processOnMainThread(job) {
+  if (job.status === "done" || job.status === "failed") return;
+  job.status = "processing";
+  setJobStatus(job, "Segmenting…");
+  try {
+    const { width, height, heads } = await segmentOnMainThread(job);
+    job.width = width;
+    job.height = height;
+    job.heads = heads;
+    finishJob(job);
+  } catch (err) {
+    console.error(err);
+    job.status = "failed";
+    setJobStatus(job, `Failed: ${err?.message || err}`);
+    updateSummary();
+  }
+}
+
+function finishJob(job) {
+  job.status = "done";
+  job.heads.forEach((hd, i) => { hd.name = `Head ${i + 1}`; });
+  if (!job.heads.length) {
+    setJobStatus(job, "No heads found — try a photo with faces visible, facing the camera.");
+  } else {
+    setJobStatus(job, `Done — ${job.heads.length} sticker${job.heads.length > 1 ? "s" : ""} ready.`);
+    renderJobStickers(job);
+  }
+  updateSummary();
+  pumpQueue();
+}
+
+function updateSummary() {
+  const done = jobs.filter((j) => j.status === "done").length;
+  const failed = jobs.filter((j) => j.status === "failed").length;
+  const active = jobs.filter((j) => j.status === "processing" || j.status === "queued").length;
+  if (!jobs.length) { setStatus(""); return; }
+  const stickers = jobs.reduce((n, j) => n + j.heads.length, 0);
+  setStatus(
+    `${jobs.length} photo${jobs.length > 1 ? "s" : ""} · ${done} done · ${active} in progress · ${failed} failed · ${stickers} sticker${stickers === 1 ? "" : "s"} — photos stay on your device, nothing was uploaded.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sticker rendering (per job)
 // ---------------------------------------------------------------------------
 function blurAlpha(alpha, w, h, radius) {
-  // Separable box blur on an alpha channel (Uint8ClampedArray).
   const tmp = new Float32Array(alpha.length);
   const out = new Uint8ClampedArray(alpha.length);
   for (let y = 0; y < h; y++) {
@@ -231,14 +434,20 @@ function maskCanvasFrom(mask, w, h) {
   c.width = w; c.height = h;
   const ctx = c.getContext("2d");
   const img = ctx.createImageData(w, h);
-  for (let i = 0; i < mask.length; i++) {
-    img.data[i * 4 + 3] = mask[i] ? 255 : 0;
-  }
+  for (let i = 0; i < mask.length; i++) img.data[i * 4 + 3] = mask[i] ? 255 : 0;
   ctx.putImageData(img, 0, 0);
   return c;
 }
 
-function renderSticker(head) {
+function cropMask(mask, fullW, x0, y0, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) out[y * w + x] = mask[(y0 + y) * fullW + (x0 + x)];
+  }
+  return out;
+}
+
+function renderSticker(job, head) {
   const outline = parseInt($("outline-width").value, 10);
   const outlineColour = $("outline-colour").value;
   const background = $("background").value;
@@ -250,13 +459,12 @@ function renderSticker(head) {
   const cw = maxX - minX + 1, ch = maxY - minY + 1;
   const W = cw + pad * 2, H = ch + pad * 2;
 
-  // --- cut-out (source pixels + feathered mask alpha) ---
-  const srcCtx = sourceCanvas.getContext("2d");
+  const srcCtx = job.workCanvas.getContext("2d");
   const srcData = srcCtx.getImageData(minX, minY, cw, ch).data;
   let alpha = new Uint8ClampedArray(cw * ch);
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
-      alpha[y * cw + x] = head.mask[(minY + y) * sourceCanvas.width + (minX + x)] ? 255 : 0;
+      alpha[y * cw + x] = head.mask[(minY + y) * job.width + (minX + x)] ? 255 : 0;
     }
   }
   if (smooth) alpha = blurAlpha(alpha, cw, ch, 2);
@@ -272,8 +480,8 @@ function renderSticker(head) {
   }
   cutCtx.putImageData(cutImg, 0, 0);
 
-  // --- silhouette, dilated by the outline width (offset-draw trick) ---
-  const sil = maskCanvasFrom(cropMask(head.mask, minX, minY, cw, ch), cw, ch);
+  // Silhouette, dilated by the outline width (offset-draw trick).
+  const sil = maskCanvasFrom(cropMask(head.mask, job.width, minX, minY, cw, ch), cw, ch);
   const dil = document.createElement("canvas");
   dil.width = W; dil.height = H;
   const dilCtx = dil.getContext("2d");
@@ -282,14 +490,12 @@ function renderSticker(head) {
     const a = (s / steps) * Math.PI * 2;
     dilCtx.drawImage(sil, pad + Math.cos(a) * outline, pad + Math.sin(a) * outline);
   }
-  dilCtx.drawImage(sil, pad, pad); // centre copy keeps thin outlines solid
-  // Colour the dilated silhouette with the outline colour.
+  dilCtx.drawImage(sil, pad, pad);
   dilCtx.globalCompositeOperation = "source-in";
   dilCtx.fillStyle = outlineColour;
   dilCtx.fillRect(0, 0, W, H);
   dilCtx.globalCompositeOperation = "source-over";
 
-  // --- compose ---
   const out = document.createElement("canvas");
   out.width = W; out.height = H;
   const ctx = out.getContext("2d");
@@ -314,51 +520,20 @@ function renderSticker(head) {
   return out;
 }
 
-function cropMask(mask, x0, y0, w, h) {
-  const fullW = sourceCanvas.width;
-  const out = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) out[y * w + x] = mask[(y0 + y) * fullW + (x0 + x)];
-  }
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// Orchestration + UI
-// ---------------------------------------------------------------------------
-async function processPhoto() {
-  $("workbench").hidden = false;
-  stickerList.innerHTML = "";
-  stickers = [];
-  heads = [];
-  const { w, h } = drawImageToWorkCanvas(currentImage);
-  setStatus("Loading the on-device model… (first run downloads ~16 MB)");
-  try {
-    heads = await findHeads(sourceCanvas, w, h);
-  } catch (err) {
-    console.error(err);
-    setStatus("Segmentation failed — check your connection (the model loads from Google's CDN) and try again.");
-    return;
-  }
-  if (!heads.length) {
-    setStatus("No heads found. Try a photo where faces are visible and well lit, facing the camera.");
-    return;
-  }
-  heads.forEach((hd, i) => { hd.name = `Head ${i + 1}`; });
-  setStatus(`Found ${heads.length} head${heads.length > 1 ? "s" : ""} — styling stickers…`);
-  renderAllStickers();
-  setStatus(`Done — ${heads.length} sticker${heads.length > 1 ? "s" : ""} ready. Photos stay on your device; nothing was uploaded.`);
-}
-
-function renderAllStickers() {
-  stickers = heads.map((head) => ({ canvas: renderSticker(head), name: head.name, include: true }));
-  stickerList.innerHTML = "";
-  stickers.forEach((st, i) => {
+function renderJobStickers(job) {
+  const { w, h } = computeWorkSize(job.img.naturalWidth, job.img.naturalHeight);
+  drawWorkCanvas(job, w, h);
+  job.width = w;
+  job.height = h;
+  job.stickers = job.heads.map((head) => ({ canvas: renderSticker(job, head), name: head.name, include: true }));
+  const list = job.card.querySelector(".job-stickers");
+  list.innerHTML = "";
+  job.stickers.forEach((st) => {
     const card = document.createElement("div");
     card.className = "sticker";
     const img = document.createElement("img");
     img.src = st.canvas.toDataURL("image/png");
-    img.alt = st.name;
+    img.alt = `${job.name} — ${st.name}`;
     const label = document.createElement("label");
     const box = document.createElement("input");
     box.type = "checkbox";
@@ -374,10 +549,50 @@ function renderAllStickers() {
     dl.textContent = "Download PNG";
     dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}.png`));
     card.append(img, label, dl);
-    stickerList.appendChild(card);
+    list.appendChild(card);
   });
 }
 
+function renderAllStickers() {
+  for (const job of jobs.filter((j) => j.status === "done" && j.heads.length)) renderJobStickers(job);
+}
+
+// ---------------------------------------------------------------------------
+// Job cards
+// ---------------------------------------------------------------------------
+function renderJobCard(job) {
+  const card = document.createElement("div");
+  card.className = "job";
+  card.id = `job-${job.id}`;
+  const thumb = document.createElement("img");
+  thumb.className = "job-thumb";
+  thumb.alt = job.name;
+  thumb.src = URL.createObjectURL(job.file);
+  const head = document.createElement("div");
+  head.className = "job-head";
+  const name = document.createElement("div");
+  name.className = "job-name";
+  name.textContent = job.name;
+  const status = document.createElement("div");
+  status.className = "job-status";
+  status.textContent = "Loading…";
+  head.append(name, status);
+  const stickers = document.createElement("div");
+  stickers.className = "job-stickers";
+  card.append(thumb, head, stickers);
+  jobsEl.appendChild(card);
+  job.card = card;
+  job.statusEl = status;
+}
+
+function setJobStatus(job, text) {
+  job.statusText = text;
+  if (job.statusEl) job.statusEl.textContent = text;
+}
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
 function downloadCanvas(canvas, filename) {
   canvas.toBlob((blob) => {
     const a = document.createElement("a");
@@ -389,7 +604,7 @@ function downloadCanvas(canvas, filename) {
 }
 
 $("download-all").addEventListener("click", () => {
-  const included = stickers.filter((s) => s.include);
+  const included = jobs.flatMap((j) => j.stickers).filter((s) => s.include);
   if (!included.length) { setStatus("Tick at least one sticker to download."); return; }
   const cols = Math.ceil(Math.sqrt(included.length));
   const cell = Math.max(...included.map((s) => Math.max(s.canvas.width, s.canvas.height)));
@@ -406,10 +621,62 @@ $("download-all").addEventListener("click", () => {
 });
 
 $("new-photo").addEventListener("click", () => {
+  jobs = [];
+  jobsEl.innerHTML = "";
   $("workbench").hidden = true;
   $("file-input").value = "";
-  currentImage = null;
+  $("url-input").value = "";
   setStatus("");
+});
+
+// ---------------------------------------------------------------------------
+// Intake: files, drag & drop, paste, URLs (one per line)
+// ---------------------------------------------------------------------------
+$("file-input").addEventListener("change", (e) => {
+  addFiles(e.target.files);
+  e.target.value = "";
+});
+
+const dropZone = $("drop-zone");
+dropZone.addEventListener("click", (e) => {
+  if (e.target.closest(".url-row")) return;
+  $("file-input").click();
+});
+dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag"); });
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.classList.remove("drag");
+  addFiles(e.dataTransfer.files);
+});
+document.addEventListener("paste", (e) => {
+  const items = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith("image/"));
+  if (items.length) addFiles(items.map((i) => i.getAsFile()));
+});
+
+async function loadFromUrl(url) {
+  setStatus("Fetching photo…");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("not an image");
+  const name = decodeURIComponent(url.split("/").pop().split("?")[0] || "photo");
+  return new File([blob], name, { type: blob.type });
+}
+$("url-load").addEventListener("click", async () => {
+  const urls = $("url-input").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!urls.length) return;
+  setStatus(`Fetching ${urls.length} photo${urls.length > 1 ? "s" : ""}…`);
+  const files = [];
+  for (const url of urls) {
+    try {
+      files.push(await loadFromUrl(url));
+    } catch (err) {
+      console.warn("URL load failed:", url, err);
+      setStatus(`Could not fetch ${url} — the host may block cross-origin reads. Download the photo and upload it instead.`);
+    }
+  }
+  if (files.length) addFiles(files);
 });
 
 // Re-render stickers when style controls change (debounced).
@@ -418,6 +685,6 @@ for (const id of ["outline-width", "outline-colour", "background", "shadow", "sm
   $(id).addEventListener("input", () => {
     $("outline-width-val").textContent = `${$("outline-width").value}px`;
     clearTimeout(renderTimer);
-    renderTimer = setTimeout(() => { if (heads.length) renderAllStickers(); }, 120);
+    renderTimer = setTimeout(renderAllStickers, 120);
   });
 }
