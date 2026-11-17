@@ -57,6 +57,9 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
   workers, each with its own status. (If workers are unavailable, the app
   falls back to processing one by one on the main thread.)
 - Pick which heads to keep, tune outline width / colour / background / shadow.
+- Dress up heads with a costume (Superhero, Astronaut, Bunny, Dino) — the head
+  is pasted onto a cute cartoon body drawn on-device, sharing one outline.
+  Costumes apply to Head only stickers.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
 - **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
   stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
@@ -75,6 +78,7 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 | `segmentation.js` | DOM-free mask helpers (connected components, dilation, upscaling) — unit-testable in Node |
 | `telegram-export.js` | Telegram pack export (512 px WebP/PNG encode, size ladder, pack icon) |
 | `zip.js` | Dependency-free ZIP writer (STORE) for the Telegram pack |
+| `costumes.js` | Cartoon body costumes (vector-drawn, no image assets) |
 
 ## Models (loaded at runtime from Google's CDN)
 
@@ -88,10 +92,11 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 ```bash
 node --check app.js && node --check worker.js && node --check segmentation.js
-node --check telegram-export.js && node --check zip.js
+node --check telegram-export.js && node --check zip.js && node --check costumes.js
 node test/segmentation.test.mjs
 node test/zip.test.mjs
 node test/telegram-export.test.mjs
+node test/costumes.test.mjs
 ```
 
 ## License

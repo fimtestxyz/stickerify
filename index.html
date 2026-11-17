@@ -47,6 +47,12 @@
 
     <fieldset class="controls">
       <legend>Sticker style (applies to all photos)</legend>
+      <label>Costume
+        <select id="costume">
+          <option value="none" selected>None</option>
+        </select>
+      </label>
+      <span class="hint" id="costume-hint"></span>
       <label>Outline width
         <input id="outline-width" type="range" min="0" max="28" value="12" step="1">
         <span id="outline-width-val">12px</span>
@@ -100,8 +106,9 @@
       <li><strong>Cut out.</strong> Each head (or whole person) is cut out with a
         soft edge, keeping hair, face and clothing detail.</li>
       <li><strong>Stickerify.</strong> A thick outline, soft shadow, and optional
-        background disc turn each cut-out into a sticker. Download one, or all
-        of them as a sheet.</li>
+        background disc turn each cut-out into a sticker. Pick a costume to put
+        a head on a cartoon body (Superhero, Astronaut, Bunny, Dino). Download
+        one, or all of them as a sheet.</li>
     </ol>
     <p class="note">No accounts, no servers, no tracking. If the multiclass model
     cannot load, the app falls back to a binary person-segmentation model plus

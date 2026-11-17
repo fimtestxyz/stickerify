@@ -6,6 +6,7 @@ import {
   groupFullBody,
 } from "./segmentation.js";
 import { exportTelegramPack, TELEGRAM_MAX_STICKERS } from "./telegram-export.js";
+import { COSTUMES } from "./costumes.js";
 
 // ---------------------------------------------------------------------------
 // Models (MediaPipe Tasks Vision, Apache-2.0). All run on-device in the
@@ -38,6 +39,7 @@ const progressText = $("model-progress-text");
 let jobs = []; // {id, name, file, img, status, statusText, width, height, categories, personMask, faceBoxes, segments, workCanvas, stickers, error}
 let jobSeq = 0;
 let segmentMode = "head"; // "head" | "full" — what to cut out
+let costumeId = "none"; // costume applied to head stickers (head mode only)
 let pool = null;      // [{worker, busy}] once initialised
 let poolFailed = false;
 let poolError = "";   // why the pool failed, shown to the user
@@ -525,15 +527,9 @@ function maskCanvasFrom(mask, w, h) {
   return c;
 }
 
-function cropMask(mask, fullW, x0, y0, w, h) {
-  const out = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) out[y * w + x] = mask[(y0 + y) * fullW + (x0 + x)];
-  }
-  return out;
-}
-
 function renderSticker(job, seg) {
+  // Costumes dress up heads only; full-body stickers render as normal.
+  const costume = segmentMode === "head" ? COSTUMES.find((c) => c.id === costumeId) || null : null;
   const outline = parseInt($("outline-width").value, 10);
   const outlineColour = $("outline-colour").value;
   const background = $("background").value;
@@ -543,7 +539,25 @@ function renderSticker(job, seg) {
   const { minX, minY, maxX, maxY } = seg.bbox;
   const pad = outline + (shadow ? 22 : 6) + 8;
   const cw = maxX - minX + 1, ch = maxY - minY + 1;
-  const W = cw + pad * 2, H = ch + pad * 2;
+
+  // Figure layout. In costume mode the canvas grows to fit the body below
+  // the head and extras (ears, capes, tails) around it; the finished
+  // sticker is cropped tight to the artwork below.
+  const topExtra = costume ? Math.round(ch * 0.55) : 0;
+  const sideExtra = costume ? Math.round(cw * 0.25) : 0;
+  const bw = costume ? Math.round(cw * 1.15) : 0;
+  const bh = costume ? Math.round(ch * 1.3) : 0;
+  const overlap = costume ? Math.round(ch * 0.16) : 0;
+  const innerW = Math.max(cw, bw);
+  const figW = innerW + sideExtra * 2;
+  const figH = ch + topExtra + (costume ? bh - overlap : 0);
+  const W = figW + pad * 2, H = figH + pad * 2;
+  const headX = pad + sideExtra + Math.round((innerW - cw) / 2);
+  const headY = pad + topExtra;
+  const headRect = { x: headX, y: headY, w: cw, h: ch };
+  const bodyRect = costume
+    ? { x: pad + sideExtra + Math.round((innerW - bw) / 2), y: headY + ch - overlap, w: bw, h: bh }
+    : null;
 
   const srcCtx = job.workCanvas.getContext("2d");
   const srcData = srcCtx.getImageData(minX, minY, cw, ch).data;
@@ -566,17 +580,44 @@ function renderSticker(job, seg) {
   }
   cutCtx.putImageData(cutImg, 0, 0);
 
+  // Costume art on its own canvases (back+body under the head, front over it).
+  let backCanvas = null, frontCanvas = null;
+  if (costume) {
+    backCanvas = document.createElement("canvas");
+    backCanvas.width = W; backCanvas.height = H;
+    const bctx = backCanvas.getContext("2d");
+    costume.drawBack(bctx, headRect, bodyRect);
+    costume.drawBody(bctx, headRect, bodyRect);
+    frontCanvas = document.createElement("canvas");
+    frontCanvas.width = W; frontCanvas.height = H;
+    costume.drawFront(frontCanvas.getContext("2d"), headRect, bodyRect);
+  }
+
+  // Combined mask: head + costume art, for the outline silhouette.
+  const mask = new Uint8Array(W * H);
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      if (seg.mask[(minY + y) * job.width + (minX + x)]) mask[(headY + y) * W + (headX + x)] = 1;
+    }
+  }
+  for (const art of [backCanvas, frontCanvas]) {
+    if (!art) continue;
+    const data = art.getContext("2d").getImageData(0, 0, W, H).data;
+    for (let i = 0; i < W * H; i++) if (data[i * 4 + 3] > 10) mask[i] = 1;
+  }
+  const maskBbox = maskBboxOf(mask, W, H);
+
   // Silhouette, dilated by the outline width (offset-draw trick).
-  const sil = maskCanvasFrom(cropMask(seg.mask, job.width, minX, minY, cw, ch), cw, ch);
+  const sil = maskCanvasFrom(mask, W, H);
   const dil = document.createElement("canvas");
   dil.width = W; dil.height = H;
   const dilCtx = dil.getContext("2d");
   const steps = 16;
   for (let s = 0; s < steps; s++) {
     const a = (s / steps) * Math.PI * 2;
-    dilCtx.drawImage(sil, pad + Math.cos(a) * outline, pad + Math.sin(a) * outline);
+    dilCtx.drawImage(sil, Math.cos(a) * outline, Math.sin(a) * outline);
   }
-  dilCtx.drawImage(sil, pad, pad);
+  dilCtx.drawImage(sil, 0, 0);
   dilCtx.globalCompositeOperation = "source-in";
   dilCtx.fillStyle = outlineColour;
   dilCtx.fillRect(0, 0, W, H);
@@ -586,7 +627,8 @@ function renderSticker(job, seg) {
   out.width = W; out.height = H;
   const ctx = out.getContext("2d");
   if (background !== "transparent") {
-    const cx = W / 2, cy = H / 2, r = Math.max(cw, ch) / 2 + outline * 0.9;
+    const cx = (maskBbox.minX + maskBbox.maxX) / 2, cy = (maskBbox.minY + maskBbox.maxY) / 2;
+    const r = Math.max(maskBbox.maxX - maskBbox.minX, maskBbox.maxY - maskBbox.minY) / 2 + outline * 0.9;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle =
@@ -602,8 +644,33 @@ function renderSticker(job, seg) {
   } else {
     ctx.drawImage(dil, 0, 0);
   }
-  ctx.drawImage(cut, pad, pad);
-  return out;
+  if (backCanvas) ctx.drawImage(backCanvas, 0, 0);
+  ctx.drawImage(cut, headX, headY);
+  if (frontCanvas) ctx.drawImage(frontCanvas, 0, 0);
+
+  if (!costume) return out;
+  // Crop tight to the artwork (plus pad) so unused extents don't shrink the figure.
+  const cx0 = Math.max(0, maskBbox.minX - pad), cy0 = Math.max(0, maskBbox.minY - pad);
+  const cx1 = Math.min(W, maskBbox.maxX + 1 + pad), cy1 = Math.min(H, maskBbox.maxY + 1 + pad);
+  const final = document.createElement("canvas");
+  final.width = cx1 - cx0; final.height = cy1 - cy0;
+  final.getContext("2d").drawImage(out, cx0, cy0, final.width, final.height, 0, 0, final.width, final.height);
+  return final;
+}
+
+function maskBboxOf(mask, w, h) {
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (mask[y * w + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return { minX, minY, maxX, maxY };
 }
 
 function renderJobStickers(job) {
@@ -633,7 +700,7 @@ function renderJobStickers(job) {
     dl.type = "button";
     dl.className = "dl";
     dl.textContent = "Download PNG";
-    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}.png`));
+    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}${costumeId !== "none" && segmentMode === "head" ? `-${costumeId}` : ""}.png`));
     card.append(img, label, dl);
     list.appendChild(card);
   });
@@ -794,9 +861,34 @@ $("url-load").addEventListener("click", async () => {
 for (const el of document.querySelectorAll('input[name="segment-mode"]')) {
   el.addEventListener("change", () => {
     segmentMode = el.value;
+    syncCostumeControl();
     refreshDoneJobs();
   });
 }
+
+/** Costumes dress up heads only — disable the picker in Full body mode. */
+function syncCostumeControl() {
+  const sel = $("costume");
+  sel.disabled = segmentMode === "full";
+  $("costume-hint").textContent = segmentMode === "full"
+    ? "Costumes dress up heads — switch to Head only to use them."
+    : "";
+}
+
+// Costume picker (options come from costumes.js, the single source of truth).
+const costumeSelect = $("costume");
+for (const c of COSTUMES) {
+  const o = document.createElement("option");
+  o.value = c.id;
+  o.textContent = c.name;
+  costumeSelect.append(o);
+}
+costumeSelect.addEventListener("change", () => {
+  costumeId = costumeSelect.value;
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(renderAllStickers, 120);
+});
+syncCostumeControl();
 
 // Re-render stickers when style controls change (debounced).
 let renderTimer = null;
