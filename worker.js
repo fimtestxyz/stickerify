@@ -4,20 +4,28 @@
 // The main thread downloads and caches the model first (with a progress bar);
 // workers load it from the shared Cache Storage, so the ~16 MB model is
 // fetched only once per browser.
-import { FilesetResolver, ImageSegmenter } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-import { labelComponents, upscaleNearest, headMaskFromCategories } from "./segmentation.js";
-
+//
+// IMPORTANT: this must be a CLASSIC worker (no { type: "module" }).
+// MediaPipe's WASM loader uses importScripts(), which module workers forbid
+// ("Module scripts don't support importScripts()"). ES modules are loaded
+// here with dynamic import() instead, which classic workers support.
 const VISION_WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const VISION_BUNDLE_URL =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const MULTICLASS_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
 const CACHE_NAME = "stickerify-v1";
 const MAX_WORK_DIM = 1200;
 const MIN_HEAD_PX = 400;
 
+let FilesetResolver, ImageSegmenter;
+let labelComponents, upscaleNearest, headMaskFromCategories;
 let segmenter = null;
 
 async function init() {
+  ({ FilesetResolver, ImageSegmenter } = await import(VISION_BUNDLE_URL));
+  ({ labelComponents, upscaleNearest, headMaskFromCategories } = await import("./segmentation.js"));
   const vision = await FilesetResolver.forVisionTasks(VISION_WASM_URL);
   let modelUrl = MULTICLASS_MODEL_URL;
   try {

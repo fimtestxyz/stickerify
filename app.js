@@ -138,7 +138,7 @@ async function initPool() {
     showProgress("Starting workers…", 0, 0);
     const workers = [];
     for (let i = 0; i < POOL_SIZE; i++) {
-      const worker = new Worker("./worker.js", { type: "module" });
+      const worker = new Worker("./worker.js"); // classic worker: MediaPipe's WASM loader needs importScripts()
       workers.push({ worker, busy: false, ready: false, initError: "" });
     }
     const ready = await Promise.all(workers.map((w) => new Promise((resolve) => {
