@@ -29,7 +29,11 @@ export const PROPS = [
   { code: "1F576", name: "Sunglasses", char: "🕶️", anchor: "eyes", scale: 0.95 },
   { code: "1F453", name: "Glasses", char: "👓", anchor: "eyes", scale: 0.9 },
   { code: "1F97D", name: "Goggles", char: "🥽", anchor: "eyes", scale: 0.95 },
-  { code: "1F3A7", name: "Headphones", char: "🎧", anchor: "ears", scale: 1.05 },
+  // Headphones come from Iconify's Carbon set, not OpenMoji: measured on the
+  // artwork, OpenMoji's cups span only 0.40 of its width, so they land on
+  // the nose; Carbon's span 0.62, so they sit on the ears. `ax`/`ay` put the
+  // cups' midpoint (not the art's centre) on the ears.
+  { code: "iconify:carbon:headphones", name: "Headphones", char: "🎧", anchor: "ears", scale: 1.42, cy: 0.48, ax: 0.5, ay: 0.8 },
   { code: "1F380", name: "Bow", char: "🎀", anchor: "side", scale: 0.45, cx: 0.84, cy: 0.1 },
   { code: "1F33A", name: "Flower", char: "🌺", anchor: "side", scale: 0.4, cx: 0.84, cy: 0.1 },
   { code: "1F4A1", name: "Light bulb", char: "💡", anchor: "above", scale: 0.5 },
@@ -41,46 +45,49 @@ export const PROPS = [
  * `imgW`/`imgH` the image size in the same units (OpenMoji: 72).
  * Returns the drawImage rect {x, y, w, h} in sticker-canvas pixels.
  * Using the art bbox (not the whole square) keeps hats sitting on the head
- * instead of floating on the SVG's transparent padding.
+ * instead of floating on the SVG's transparent padding. `ax`/`ay` move the
+ * anchor point inside the artwork (fractions of the art bbox, default the
+ * centre — or the art's bottom edge for `top` props); the headphones use
+ * them to anchor on the cups' midpoint instead of the art's centre.
  */
 export function propDrawRect(prop, art, head, imgW, imgH) {
   const targetW = prop.scale * head.w;
   const s = targetW / art.w;
   const dw = imgW * s, dh = imgH * s;
   const cx = head.x + (prop.cx ?? 0.5) * head.w;
-  let ax, ay; // top-left of the ARTWORK in canvas pixels
-  switch (prop.anchor) {
-    case "top": {
-      const bottom = head.y + (prop.cy ?? 0.22) * head.h;
-      ax = cx - (art.w * s) / 2;
-      ay = bottom - art.h * s;
-      break;
-    }
-    case "above": {
-      const cy = head.y - 0.1 * head.h;
-      ax = cx - (art.w * s) / 2;
-      ay = cy - (art.h * s) / 2;
-      break;
-    }
-    default: { // eyes, ears, side — centre anchored
-      const cyFrac = prop.cy ?? (prop.anchor === "eyes" ? 0.42 : prop.anchor === "ears" ? 0.38 : 0.14);
-      const cy = head.y + cyFrac * head.h;
-      ax = cx - (art.w * s) / 2;
-      ay = cy - (art.h * s) / 2;
-    }
+  const axFrac = prop.ax ?? 0.5;
+  const ayFrac = prop.ay ?? (prop.anchor === "top" ? 1 : 0.5);
+  let px, py; // where the artwork's anchor point lands, in canvas pixels
+  if (prop.anchor === "top") {
+    px = cx;
+    py = head.y + (prop.cy ?? 0.22) * head.h;
+  } else if (prop.anchor === "above") {
+    px = cx;
+    py = head.y - 0.1 * head.h;
+  } else {
+    const cyFrac = prop.cy ?? (prop.anchor === "eyes" ? 0.42 : prop.anchor === "ears" ? 0.38 : 0.14);
+    px = cx;
+    py = head.y + cyFrac * head.h;
   }
-  return { x: ax - art.x * s, y: ay - art.y * s, w: dw, h: dh };
+  return {
+    x: px - (art.x + axFrac * art.w) * s,
+    y: py - (art.y + ayFrac * art.h) * s,
+    w: dw,
+    h: dh,
+  };
 }
 
 /**
  * Draw order for stacked props, so later layers sit on top of earlier ones
  * the way they would in real life: headphones under glasses, and hats and
  * crowns on top of everything (a headphone band must not cross a crown).
+ * Entries are {def, rec} wrappers as built in renderSticker, or bare defs.
  */
 const DRAW_ORDER = { ears: 0, eyes: 1, side: 2, above: 3, top: 4 };
 
 export function sortPropsForDrawing(list) {
-  return [...list].sort((a, b) => (DRAW_ORDER[a.anchor] ?? 9) - (DRAW_ORDER[b.anchor] ?? 9));
+  const anchorOf = (p) => p.def?.anchor ?? p.anchor;
+  return [...list].sort((a, b) => (DRAW_ORDER[anchorOf(a)] ?? 9) - (DRAW_ORDER[anchorOf(b)] ?? 9));
 }
 
 /** Fetch one prop's SVG text, via the Cache API when available. */

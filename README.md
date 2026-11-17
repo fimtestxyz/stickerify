@@ -118,7 +118,12 @@ Props use [OpenMoji](https://openmoji.org) emoji, licensed CC-BY-SA 4.0, fetched
 live from the jsDelivr CDN (see `props.js`). To add a prop, add one line to
 `PROPS` in `props.js` with the emoji's codepoint, name, character, anchor
 (`top` / `eyes` / `ears` / `side` / `above`) and scale — no other code changes
-needed.
+needed. One exception: Headphones come from Iconify's Carbon set, because
+OpenMoji's headphone artwork has its cups too close together (0.40 of its
+width) to sit on real ears — Carbon's span 0.62. Prop placement is measured
+from each artwork's own alpha bounds (see `measureArt` in `app.js`), and
+`ax`/`ay` in a prop entry move the anchor point inside the artwork when the
+feature that matters (the cups) is not at its centre.
 
 Search results come from the [Iconify API](https://iconify.design) (see
 `iconify.js`); each icon keeps its own open licence. Flaticon is deliberately

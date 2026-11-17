@@ -10,7 +10,8 @@ const ANCHORS = new Set(["top", "eyes", "ears", "side", "above"]);
 assert.ok(PROPS.length >= 10, "at least ten props ship");
 assert.equal(new Set(PROPS.map((p) => p.code)).size, PROPS.length, "prop codes are unique");
 for (const p of PROPS) {
-  assert.match(p.code, /^[0-9A-F]+$/, `${p.code} is an OpenMoji codepoint`);
+  assert.ok(/^[0-9A-F]+$/.test(p.code) || p.code.startsWith("iconify:"),
+    `${p.code} is an OpenMoji codepoint or an Iconify id`);
   assert.ok(p.name && p.char, `${p.code} has a name and an emoji char`);
   assert.ok(ANCHORS.has(p.anchor), `${p.code} anchor is known`);
   assert.ok(p.scale > 0 && p.scale <= 1.5, `${p.code} scale is sane`);
@@ -71,13 +72,34 @@ function artBox(rect, s) {
   assert.ok(approx(box.cx, HEAD.x + HEAD.w / 2), "bulb centred on the head");
 }
 
-// Draw order: headphones under glasses, hats and crowns on top.
+// Headphones (ears): the anchor point is the cups' midpoint (ax 0.5,
+// ay 0.8 of the art bbox), landing at ear height — not the art's centre.
+{
+  const prop = PROPS.find((p) => p.name === "Headphones");
+  assert.ok(prop.code.startsWith("iconify:carbon:headphones"), "headphones come from Carbon");
+  const r = propDrawRect(prop, ART, HEAD, 72, 72);
+  const s = (prop.scale * HEAD.w) / ART.w;
+  const anchorX = r.x + (ART.x + prop.ax * ART.w) * s;
+  const anchorY = r.y + (ART.y + prop.ay * ART.h) * s;
+  assert.ok(approx(anchorX, HEAD.x + HEAD.w / 2), "headphone cups centred on the head");
+  assert.ok(approx(anchorY, HEAD.y + prop.cy * HEAD.h), "headphone cups sit at ear height");
+}
+
+// Draw order: headphones under glasses, hats and crowns on top. The sort
+// takes the {def, rec} wrappers renderSticker builds, not bare defs.
 {
   const crown = PROPS.find((p) => p.code === "1F451");
   const glasses = PROPS.find((p) => p.code === "1F576");
-  const phones = PROPS.find((p) => p.code === "1F3A7");
-  const sorted = sortPropsForDrawing([crown, glasses, phones]);
-  assert.deepEqual(sorted.map((p) => p.code), ["1F3A7", "1F576", "1F451"]);
+  const phones = PROPS.find((p) => p.name === "Headphones");
+  const sorted = sortPropsForDrawing([
+    { def: crown, rec: null }, { def: glasses, rec: null }, { def: phones, rec: null },
+  ]);
+  assert.deepEqual(sorted.map((p) => p.def.code), [phones.code, "1F576", "1F451"]);
+  // Bare defs sort the same way.
+  assert.deepEqual(
+    sortPropsForDrawing([crown, glasses, phones]).map((p) => p.code),
+    [phones.code, "1F576", "1F451"],
+  );
 }
 
 // Fetch through a stub (no network, no Cache API in Node).
