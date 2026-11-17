@@ -331,7 +331,7 @@ function addFiles(files) {
       URL.revokeObjectURL(url);
       job.img = img;
       setJobStatus(job, "Queued");
-      pumpQueue();
+      kick();
     };
     img.onerror = () => {
       job.status = "failed";
@@ -341,28 +341,39 @@ function addFiles(files) {
     img.src = url;
   }
   updateSummary();
-  processQueue();
+  kick();
 }
 
 let fallbackRunning = false;
 
 async function processQueue() {
   const ok = await ensurePool();
-  if (!ok) {
-    // Sequential main-thread fallback.
-    if (fallbackRunning) return;
-    fallbackRunning = true;
-    setStatus(`Workers unavailable${poolError ? ` (${poolError})` : ""} — processing photos one by one on the main thread.`);
-    try {
-      for (const job of jobs.filter((j) => j.status === "queued" && j.img)) {
-        await processOnMainThread(job);
-      }
-    } finally {
-      fallbackRunning = false;
+  if (ok) { pumpQueue(); return; }
+  // Sequential main-thread fallback.
+  if (fallbackRunning) return;
+  fallbackRunning = true;
+  setStatus(`Workers unavailable${poolError ? ` (${poolError})` : ""} — processing photos one by one on the main thread.`);
+  try {
+    for (;;) {
+      const next = jobs.find((j) => j.status === "queued" && j.img);
+      if (!next) break;
+      await processOnMainThread(next);
     }
-    updateSummary();
+  } finally {
+    fallbackRunning = false;
   }
-  pumpQueue();
+  updateSummary();
+  kick(); // pick up anything that finished loading while we worked
+}
+
+/** Central dispatcher: called whenever a job becomes ready or the pool state changes. */
+function kick() {
+  if (pool) { pumpQueue(); return; }
+  if (poolFailed) {
+    if (!fallbackRunning && jobs.some((j) => j.status === "queued" && j.img)) processQueue();
+    return;
+  }
+  processQueue();
 }
 
 function pumpQueue() {
