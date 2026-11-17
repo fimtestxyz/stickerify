@@ -138,3 +138,28 @@ button:disabled { opacity: 0.5; cursor: default; }
 .note { color: #6d675e; font-size: 0.92rem; }
 footer { padding-bottom: 32px; color: #6d675e; font-size: 0.88rem; }
 footer a { color: inherit; }
+
+.props {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 16px 20px;
+  margin: 16px 0;
+}
+.props legend { font-weight: 700; padding: 0 6px; }
+.props-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.prop-btn {
+  width: 46px; height: 46px;
+  font-size: 26px; line-height: 1;
+  padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; cursor: pointer;
+}
+.prop-btn:hover { border-color: #999; }
+.prop-btn.on { border-color: #111; box-shadow: 0 0 0 2px #ffd60a; background: #fffbe6; }
+.prop-btn.loading { opacity: 0.5; }
+.prop-btn .p-img { width: 36px; height: 36px; }
+#props-wrap.disabled { opacity: 0.45; }
+#props-wrap.disabled .prop-btn { pointer-events: none; }
+.props-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

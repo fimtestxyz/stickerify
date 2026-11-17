@@ -60,6 +60,11 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 - Dress up heads with a costume (Superhero, Astronaut, Bunny, Dino) — the head
   is pasted onto a cute cartoon body drawn on-device, sharing one outline.
   Costumes apply to Head only stickers.
+- Add live props from OpenMoji (crown, hats, sunglasses, headphones, bow,
+  flower, light bulb…) — tap one in the Props row and it is fetched from the
+  OpenMoji release on the jsDelivr CDN, cached, and drawn onto every head.
+  Several props can be on at once; they stack with costumes, and they travel
+  into the Telegram export too. Props apply to Head only stickers.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
 - **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
   stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
@@ -79,6 +84,7 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 | `telegram-export.js` | Telegram pack export (512 px WebP/PNG encode, size ladder, pack icon) |
 | `zip.js` | Dependency-free ZIP writer (STORE) for the Telegram pack |
 | `costumes.js` | Cartoon body costumes (vector-drawn, no image assets) |
+| `props.js` | Live OpenMoji props: list, head placement math, CDN fetch + cache |
 
 ## Models (loaded at runtime from Google's CDN)
 
@@ -93,11 +99,19 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 ```bash
 node --check app.js && node --check worker.js && node --check segmentation.js
 node --check telegram-export.js && node --check zip.js && node --check costumes.js
+node --check props.js
 node test/segmentation.test.mjs
 node test/zip.test.mjs
 node test/telegram-export.test.mjs
 node test/costumes.test.mjs
+node test/props.test.mjs
 ```
+
+Props use [OpenMoji](https://openmoji.org) emoji, licensed CC-BY-SA 4.0, fetched
+live from the jsDelivr CDN (see `props.js`). To add a prop, add one line to
+`PROPS` in `props.js` with the emoji's codepoint, name, character, anchor
+(`top` / `eyes` / `ears` / `side` / `above`) and scale — no other code changes
+needed.
 
 ## License
 

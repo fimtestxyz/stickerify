@@ -7,6 +7,7 @@ import {
 } from "./segmentation.js";
 import { exportTelegramPack, TELEGRAM_MAX_STICKERS } from "./telegram-export.js";
 import { COSTUMES } from "./costumes.js";
+import { PROPS, propSvgUrl, propDrawRect, fetchPropSvg } from "./props.js";
 
 // ---------------------------------------------------------------------------
 // Models (MediaPipe Tasks Vision, Apache-2.0). All run on-device in the
@@ -40,6 +41,9 @@ let jobs = []; // {id, name, file, img, status, statusText, width, height, categ
 let jobSeq = 0;
 let segmentMode = "head"; // "head" | "full" — what to cut out
 let costumeId = "none"; // costume applied to head stickers (head mode only)
+const activeProps = new Set(); // OpenMoji prop codes applied to head stickers
+const propImages = new Map(); // code -> {img, art} (loaded SVG, measured art bbox)
+const propLoading = new Map(); // code -> Promise<boolean>
 let pool = null;      // [{worker, busy}] once initialised
 let poolFailed = false;
 let poolError = "";   // why the pool failed, shown to the user
@@ -528,8 +532,14 @@ function maskCanvasFrom(mask, w, h) {
 }
 
 function renderSticker(job, seg) {
-  // Costumes dress up heads only; full-body stickers render as normal.
+  // Costumes and props dress up heads only; full-body stickers render as normal.
   const costume = segmentMode === "head" ? COSTUMES.find((c) => c.id === costumeId) || null : null;
+  const props = segmentMode === "head"
+    ? [...activeProps]
+        .map((code) => ({ def: PROPS.find((p) => p.code === code), rec: propImages.get(code) }))
+        .filter((p) => p.def && p.rec)
+    : [];
+  const hasExtras = costume || props.length > 0;
   const outline = parseInt($("outline-width").value, 10);
   const outlineColour = $("outline-colour").value;
   const background = $("background").value;
@@ -540,11 +550,11 @@ function renderSticker(job, seg) {
   const pad = outline + (shadow ? 22 : 6) + 8;
   const cw = maxX - minX + 1, ch = maxY - minY + 1;
 
-  // Figure layout. In costume mode the canvas grows to fit the body below
-  // the head and extras (ears, capes, tails) around it; the finished
+  // Figure layout. With a costume or props the canvas grows to fit the body
+  // below the head and extras (ears, capes, hats) around it; the finished
   // sticker is cropped tight to the artwork below.
-  const topExtra = costume ? Math.round(ch * 0.55) : 0;
-  const sideExtra = costume ? Math.round(cw * 0.25) : 0;
+  const topExtra = hasExtras ? Math.round(ch * 0.55) : 0;
+  const sideExtra = hasExtras ? Math.round(cw * 0.25) : 0;
   const bw = costume ? Math.round(cw * 1.15) : 0;
   const bh = costume ? Math.round(ch * 1.3) : 0;
   const overlap = costume ? Math.round(ch * 0.16) : 0;
@@ -580,7 +590,8 @@ function renderSticker(job, seg) {
   }
   cutCtx.putImageData(cutImg, 0, 0);
 
-  // Costume art on its own canvases (back+body under the head, front over it).
+  // Costume art on its own canvases (back+body under the head, front over it),
+  // plus any active props drawn on the front canvas.
   let backCanvas = null, frontCanvas = null;
   if (costume) {
     backCanvas = document.createElement("canvas");
@@ -588,9 +599,16 @@ function renderSticker(job, seg) {
     const bctx = backCanvas.getContext("2d");
     costume.drawBack(bctx, headRect, bodyRect);
     costume.drawBody(bctx, headRect, bodyRect);
+  }
+  if (costume || props.length > 0) {
     frontCanvas = document.createElement("canvas");
     frontCanvas.width = W; frontCanvas.height = H;
-    costume.drawFront(frontCanvas.getContext("2d"), headRect, bodyRect);
+    const fctx = frontCanvas.getContext("2d");
+    if (costume) costume.drawFront(fctx, headRect, bodyRect);
+    for (const p of props) {
+      const r = propDrawRect(p.def, p.rec.art, headRect, 72, 72);
+      fctx.drawImage(p.rec.img, r.x, r.y, r.w, r.h);
+    }
   }
 
   // Combined mask: head + costume art, for the outline silhouette.
@@ -648,7 +666,7 @@ function renderSticker(job, seg) {
   ctx.drawImage(cut, headX, headY);
   if (frontCanvas) ctx.drawImage(frontCanvas, 0, 0);
 
-  if (!costume) return out;
+  if (!hasExtras) return out;
   // Crop tight to the artwork (plus pad) so unused extents don't shrink the figure.
   const cx0 = Math.max(0, maskBbox.minX - pad), cy0 = Math.max(0, maskBbox.minY - pad);
   const cx1 = Math.min(W, maskBbox.maxX + 1 + pad), cy1 = Math.min(H, maskBbox.maxY + 1 + pad);
@@ -700,7 +718,7 @@ function renderJobStickers(job) {
     dl.type = "button";
     dl.className = "dl";
     dl.textContent = "Download PNG";
-    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}${costumeId !== "none" && segmentMode === "head" ? `-${costumeId}` : ""}.png`));
+    dl.addEventListener("click", () => downloadCanvas(st.canvas, `stickerify-${st.name.toLowerCase().replace(/\s+/g, "-")}${costumeId !== "none" && segmentMode === "head" ? `-${costumeId}` : ""}${segmentMode === "head" && activeProps.size ? "-" + [...activeProps].map((code) => PROPS.find((p) => p.code === code)?.name.toLowerCase().replace(/\s+/g, "-")).filter(Boolean).join("-") : ""}.png`));
     card.append(img, label, dl);
     list.appendChild(card);
   });
@@ -861,17 +879,21 @@ $("url-load").addEventListener("click", async () => {
 for (const el of document.querySelectorAll('input[name="segment-mode"]')) {
   el.addEventListener("change", () => {
     segmentMode = el.value;
-    syncCostumeControl();
+    syncExtrasControl();
     refreshDoneJobs();
   });
 }
 
-/** Costumes dress up heads only — disable the picker in Full body mode. */
-function syncCostumeControl() {
+/** Costumes and props dress up heads only — disable them in Full body mode. */
+function syncExtrasControl() {
   const sel = $("costume");
   sel.disabled = segmentMode === "full";
   $("costume-hint").textContent = segmentMode === "full"
     ? "Costumes dress up heads — switch to Head only to use them."
+    : "";
+  $("props-wrap").classList.toggle("disabled", segmentMode === "full");
+  $("props-hint").textContent = segmentMode === "full"
+    ? "Props dress up heads too — switch to Head only to use them."
     : "";
 }
 
@@ -888,7 +910,103 @@ costumeSelect.addEventListener("change", () => {
   clearTimeout(renderTimer);
   renderTimer = setTimeout(renderAllStickers, 120);
 });
-syncCostumeControl();
+
+/** Alpha bounding box of an SVG prop image, in 72x72 OpenMoji space. */
+function measureArt(img) {
+  const S = 72;
+  const c = document.createElement("canvas");
+  c.width = S; c.height = S;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0, S, S);
+  const data = ctx.getImageData(0, 0, S, S).data;
+  let minX = S, minY = S, maxX = -1, maxY = -1;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      if (data[(y * S + x) * 4 + 3] > 10) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+/** Fetch one prop's SVG (live, cached) and turn it into a canvas image. */
+async function ensurePropLoaded(code) {
+  if (propImages.has(code)) return true;
+  if (propLoading.has(code)) return propLoading.get(code);
+  const p = (async () => {
+    try {
+      const svgText = await fetchPropSvg(code);
+      const blob = new Blob([svgText], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      propImages.set(code, { img, art: measureArt(img) });
+      return true;
+    } catch (e) {
+      console.warn("prop failed to load", code, e);
+      return false;
+    } finally {
+      propLoading.delete(code);
+    }
+  })();
+  propLoading.set(code, p);
+  return p;
+}
+
+// Props gallery: one toggle button per OpenMoji prop. The button shows the
+// emoji character until its live SVG thumbnail loads, then swaps to that.
+const propsRow = $("props-row");
+for (const prop of PROPS) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "prop-btn";
+  btn.dataset.code = prop.code;
+  btn.title = prop.name;
+  btn.setAttribute("aria-label", `Add ${prop.name} prop`);
+  const char = document.createElement("span");
+  char.className = "p-char";
+  char.textContent = prop.char;
+  const thumb = document.createElement("img");
+  thumb.className = "p-img";
+  thumb.alt = prop.name;
+  thumb.hidden = true;
+  thumb.src = propSvgUrl(prop.code);
+  thumb.addEventListener("load", () => { thumb.hidden = false; char.hidden = true; });
+  btn.append(char, thumb);
+  btn.addEventListener("click", () => toggleProp(prop.code, btn));
+  propsRow.append(btn);
+}
+
+async function toggleProp(code, btn) {
+  const prop = PROPS.find((p) => p.code === code);
+  if (activeProps.has(code)) {
+    activeProps.delete(code);
+    btn.classList.remove("on");
+    renderAllStickers();
+    return;
+  }
+  btn.classList.add("loading");
+  const ok = await ensurePropLoaded(code);
+  btn.classList.remove("loading");
+  if (!ok) {
+    setStatus(`Couldn't load the ${prop.name} prop — check your connection and try again.`);
+    return;
+  }
+  activeProps.add(code);
+  btn.classList.add("on");
+  renderAllStickers();
+}
+
+$("props-none").addEventListener("click", () => {
+  activeProps.clear();
+  document.querySelectorAll(".prop-btn.on").forEach((b) => b.classList.remove("on"));
+  renderAllStickers();
+});
+syncExtrasControl();
 
 // Re-render stickers when style controls change (debounced).
 let renderTimer = null;
