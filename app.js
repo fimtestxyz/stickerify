@@ -36,7 +36,9 @@ let jobs = []; // {id, name, file, img, status, statusText, width, height, heads
 let jobSeq = 0;
 let pool = null;      // [{worker, busy}] once initialised
 let poolFailed = false;
+let poolError = "";   // why the pool failed, shown to the user
 let modelBlobUrl = null;
+let modelInfo = null; // { cached, bytes, ms } for the ready summary
 let fallback = null;  // { segmenter, faceDetector } — main-thread fallback
 
 const setStatus = (msg) => { statusEl.textContent = msg; };
@@ -72,15 +74,18 @@ function showProgress(label, loaded, total) {
 
 function hideProgress() { progressBox.hidden = true; }
 
-/** Download the model with progress, caching it so repeat visits skip the download. Returns a blob: URL. */
+/** Download the model with progress, caching it so repeat visits skip the download.
+ * Returns { blobUrl, cached, bytes, ms }. */
 async function fetchModelBlobWithProgress(url, onProgress) {
+  const started = performance.now();
   let cache = null;
   try { cache = await caches.open(CACHE_NAME); } catch { /* Cache API unavailable — download directly. */ }
   if (cache) {
     const hit = await cache.match(url);
     if (hit) {
       onProgress(-1, -1); // cached: no download needed
-      return URL.createObjectURL(await hit.blob());
+      const blob = await hit.blob();
+      return { blobUrl: URL.createObjectURL(blob), cached: true, bytes: blob.size, ms: performance.now() - started };
     }
   }
   const res = await fetch(url);
@@ -98,7 +103,7 @@ async function fetchModelBlobWithProgress(url, onProgress) {
   }
   const blob = new Blob(chunks);
   if (cache) { try { await cache.put(url, new Response(blob)); } catch { /* non-fatal */ } }
-  return URL.createObjectURL(blob);
+  return { blobUrl: URL.createObjectURL(blob), cached: false, bytes: blob.size, ms: performance.now() - started };
 }
 
 async function loadVision() {
@@ -121,39 +126,58 @@ async function ensurePool() {
 async function initPool() {
   try {
     showProgress("Downloading segmentation model…", 0, 0);
-    modelBlobUrl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
+    const dl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
       if (loaded < 0) {
         showProgress("Model cached — starting workers…", 0, 0);
       } else {
         showProgress("Downloading segmentation model…", loaded, total);
       }
     });
+    modelBlobUrl = dl.blobUrl;
+    modelInfo = dl;
     showProgress("Starting workers…", 0, 0);
     const workers = [];
     for (let i = 0; i < POOL_SIZE; i++) {
       const worker = new Worker("./worker.js", { type: "module" });
-      workers.push({ worker, busy: false, ready: false });
+      workers.push({ worker, busy: false, ready: false, initError: "" });
     }
     const ready = await Promise.all(workers.map((w) => new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), 60000);
+      const timer = setTimeout(() => { w.initError = "Timed out after 60s"; resolve(false); }, 60000);
       w.worker.onmessage = (e) => {
         if (e.data.type === "ready") { w.ready = true; clearTimeout(timer); resolve(true); }
-        else if (e.data.type === "error") { clearTimeout(timer); resolve(false); }
+        else if (e.data.type === "error") { w.initError = e.data.error || "Unknown worker error"; clearTimeout(timer); resolve(false); }
         else handleWorkerMessage(w, e.data);
       };
-      w.worker.onerror = () => { clearTimeout(timer); resolve(false); };
+      w.worker.onerror = () => { w.initError = "Worker script failed to load"; clearTimeout(timer); resolve(false); };
       w.worker.postMessage({ type: "init" });
     })));
     pool = workers.filter((w, i) => ready[i]);
-    if (!pool.length) throw new Error("No workers became ready");
-    hideProgress();
+    if (!pool.length) {
+      poolError = workers.map((w) => w.initError).filter(Boolean).join("; ") || "No workers became ready";
+      throw new Error(poolError);
+    }
+    showModelReady();
     return true;
   } catch (err) {
     console.warn("Worker pool unavailable, falling back to main-thread processing:", err);
     poolFailed = true;
+    if (!poolError) poolError = String(err?.message || err);
     hideProgress();
     return false;
   }
+}
+
+/** Leave a short "model ready" summary visible so a fast download is still seen. */
+function showModelReady() {
+  if (!modelInfo) { hideProgress(); return; }
+  progressLabel.textContent = "Segmentation model ready ✓";
+  progressBar.max = 100;
+  progressBar.value = 100;
+  progressText.textContent = modelInfo.cached
+    ? "Loaded from cache — no download needed."
+    : `Downloaded ${fmtMB(modelInfo.bytes)} in ${(modelInfo.ms / 1000).toFixed(1)}s — cached for next time.`;
+  progressBox.hidden = false;
+  setTimeout(hideProgress, 5000);
 }
 
 function handleWorkerMessage(w, data) {
@@ -183,10 +207,12 @@ async function loadMainSegmenter() {
   const vision = await loadVision();
   if (!modelBlobUrl) {
     showProgress("Downloading segmentation model…", 0, 0);
-    modelBlobUrl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
+    const dl = await fetchModelBlobWithProgress(MULTICLASS_MODEL_URL, (loaded, total) => {
       if (loaded < 0) showProgress("Model cached — warming up…", 0, 0);
       else showProgress("Downloading segmentation model…", loaded, total);
     });
+    modelBlobUrl = dl.blobUrl;
+    modelInfo = dl;
   }
   const segmenter = await ImageSegmenter.createFromOptions(vision, {
     baseOptions: { modelAssetPath: modelBlobUrl, delegate: "CPU" },
@@ -326,7 +352,7 @@ async function processQueue() {
     // Sequential main-thread fallback.
     if (fallbackRunning) return;
     fallbackRunning = true;
-    setStatus("Workers unavailable — processing photos one by one on the main thread.");
+    setStatus(`Workers unavailable${poolError ? ` (${poolError})` : ""} — processing photos one by one on the main thread.`);
     try {
       for (const job of jobs.filter((j) => j.status === "queued" && j.img)) {
         await processOnMainThread(job);
