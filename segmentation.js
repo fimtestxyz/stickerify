@@ -118,3 +118,86 @@ export function headMaskFromCategories(catMask) {
   }
   return out;
 }
+
+/** Body pixels in a multiclass category mask: body skin + clothes. */
+export function bodyMaskFromCategories(catMask) {
+  const out = new Uint8Array(catMask.length);
+  for (let i = 0; i < catMask.length; i++) {
+    const c = catMask[i];
+    out[i] = (c === CATEGORY.BODY_SKIN || c === CATEGORY.CLOTHES) ? 1 : 0;
+  }
+  return out;
+}
+
+function bboxGap(a, b) {
+  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+  return Math.max(dx, dy);
+}
+
+/**
+ * Group head and body blobs into whole people for full-body stickers.
+ * Each head starts a person; nearby body blobs (torso, arms, legs) are
+ * merged into the closest person, growing its bounding box as parts are
+ * added, so a leg attaches through the torso even when it is far from the
+ * head itself. Body blobs too far from every person become their own
+ * sticker (head out of frame). Returns [{ bbox, mask }] sorted by pixel
+ * count, largest first. `mask` is a Uint8Array of 0/1 over width*height.
+ */
+export function groupFullBody(headMask, bodyMask, width, height, minPixels = 40) {
+  const heads = labelComponents(headMask, width, height, minPixels);
+  const bodies = labelComponents(bodyMask, width, height, minPixels);
+  const gapLimit = Math.round(Math.max(width, height) * 0.15);
+
+  const persons = heads.components.map((c) => ({
+    bbox: { minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY },
+    ids: new Set([`h${c.id}`]),
+    count: c.count,
+  }));
+  // Head labels are re-mapped 0..n-1 by labelComponents; prefix them so
+  // they never collide with body labels.
+  const headLabels = heads.labels;
+  const bodyLabels = bodies.labels;
+
+  // Greedy: attach the closest remaining body blob to any person, while
+  // it is within the gap limit; each merge grows the person's bbox.
+  const remaining = [...bodies.components];
+  for (;;) {
+    let best = null;
+    for (const b of remaining) {
+      for (const person of persons) {
+        const gap = bboxGap(b, person.bbox);
+        if (!best || gap < best.gap) best = { body: b, person, gap };
+      }
+    }
+    if (!best || best.gap > gapLimit) break;
+    const { body, person } = best;
+    person.ids.add(body.id);
+    person.count += body.count;
+    person.bbox.minX = Math.min(person.bbox.minX, body.minX);
+    person.bbox.minY = Math.min(person.bbox.minY, body.minY);
+    person.bbox.maxX = Math.max(person.bbox.maxX, body.maxX);
+    person.bbox.maxY = Math.max(person.bbox.maxY, body.maxY);
+    remaining.splice(remaining.indexOf(body), 1);
+  }
+  // Unattached body blobs become headless people of their own.
+  for (const b of remaining) {
+    persons.push({
+      bbox: { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY },
+      ids: new Set([b.id]),
+      count: b.count,
+      headless: true,
+    });
+  }
+
+  return persons
+    .sort((a, b) => b.count - a.count)
+    .map((person) => {
+      const m = new Uint8Array(width * height);
+      for (let p = 0; p < width * height; p++) {
+        if (headLabels[p] !== -1 && person.ids.has(`h${headLabels[p]}`)) m[p] = 1;
+        else if (bodyLabels[p] !== -1 && person.ids.has(bodyLabels[p])) m[p] = 1;
+      }
+      return { bbox: person.bbox, mask: m };
+    });
+}

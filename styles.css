@@ -125,6 +125,7 @@ button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--
 .controls label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
 .controls label.check { flex-direction: row; align-items: center; gap: 6px; }
 .controls input[type="range"] { width: 150px; }
+.controls input[type="radio"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .controls input[type="color"] { width: 56px; height: 34px; padding: 2px; }
 .controls select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); }
 

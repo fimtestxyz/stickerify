@@ -9,7 +9,7 @@
 <body>
 <header>
   <h1>🪄 Stickerify</h1>
-  <p class="tagline">Upload a photo, we cut out the heads and turn them into stickers.</p>
+  <p class="tagline">Upload a photo — we cut out heads or whole people and turn them into stickers.</p>
   <p class="privacy">🔒 <strong>Private by design:</strong> your photos never leave this device.
   Segmentation runs entirely in your browser with an on-device ML model — nothing is
   uploaded, stored, or sent anywhere.</p>
@@ -38,6 +38,12 @@
 
   <section id="workbench" hidden>
     <div id="status" role="status"></div>
+
+    <fieldset class="controls">
+      <legend>What to cut out</legend>
+      <label class="check"><input type="radio" name="segment-mode" value="head" checked> Head only</label>
+      <label class="check"><input type="radio" name="segment-mode" value="full"> Full body — head, torso, arms and legs</label>
+    </fieldset>
 
     <fieldset class="controls">
       <legend>Sticker style (applies to all photos)</legend>
@@ -72,13 +78,14 @@
     <h2>How it works</h2>
     <ol>
       <li><strong>Segment.</strong> A MediaPipe multiclass selfie-segmentation model
-        (hair + face) finds every head in the photo, on your device. The model
+        (hair, face, body skin, clothes) finds every head — or the whole person,
+        if you pick Full body — in the photo, on your device. The model
         downloads once (~16 MB) with a progress bar, then stays cached.</li>
       <li><strong>Batch.</strong> Drop in as many photos as you like — up to three
         are segmented at the same time in background workers, each with its own
         status.</li>
-      <li><strong>Cut out.</strong> Each head is cut out with a soft edge, keeping
-        hair and face detail.</li>
+      <li><strong>Cut out.</strong> Each head (or whole person) is cut out with a
+        soft edge, keeping hair, face and clothing detail.</li>
       <li><strong>Stickerify.</strong> A thick outline, soft shadow, and optional
         background disc turn each cut-out into a sticker. Download one, or all
         of them as a sheet.</li>
@@ -86,7 +93,7 @@
     <p class="note">No accounts, no servers, no tracking. If the multiclass model
     cannot load, the app falls back to a binary person-segmentation model plus
     face detection. This tool does not identify anyone — it only finds head
-    shapes, and it never stores a photo.</p>
+    and body shapes, and it never stores a photo.</p>
   </section>
 </main>
 

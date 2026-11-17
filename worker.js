@@ -17,15 +17,14 @@ const MULTICLASS_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
 const CACHE_NAME = "stickerify-v1";
 const MAX_WORK_DIM = 1200;
-const MIN_HEAD_PX = 400;
 
 let FilesetResolver, ImageSegmenter;
-let labelComponents, upscaleNearest, headMaskFromCategories;
+let upscaleNearest;
 let segmenter = null;
 
 async function init() {
   ({ FilesetResolver, ImageSegmenter } = await import(VISION_BUNDLE_URL));
-  ({ labelComponents, upscaleNearest, headMaskFromCategories } = await import("./segmentation.js"));
+  ({ upscaleNearest } = await import("./segmentation.js"));
   const vision = await FilesetResolver.forVisionTasks(VISION_WASM_URL);
   let modelUrl = MULTICLASS_MODEL_URL;
   try {
@@ -67,16 +66,10 @@ self.onmessage = async (e) => {
       bitmap.close();
       const result = segmenter.segment(canvas);
       const maskImg = result.categoryMask;
-      const head = headMaskFromCategories(maskImg.getAsUint8Array());
-      const full = upscaleNearest(head, maskImg.width, maskImg.height, w, h);
-      const { labels, components } = labelComponents(full, w, h, MIN_HEAD_PX);
-      const heads = components.map((c) => {
-        const m = new Uint8Array(w * h);
-        for (let p = 0; p < full.length; p++) if (labels[p] === c.id) m[p] = 1;
-        return { bbox: c, mask: m };
-      });
-      const transfers = heads.map((hh) => hh.mask.buffer);
-      self.postMessage({ type: "done", id, width: w, height: h, heads }, transfers);
+      // Return the raw multiclass mask (upscaled to work size); the main
+      // thread derives head or full-body stickers from it per the mode.
+      const categories = upscaleNearest(maskImg.getAsUint8Array(), maskImg.width, maskImg.height, w, h);
+      self.postMessage({ type: "done", id, width: w, height: h, categories }, [categories.buffer]);
     } catch (err) {
       self.postMessage({ type: "error", id, error: String(err?.message || err) });
     }

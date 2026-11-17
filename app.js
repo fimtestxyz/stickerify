@@ -2,6 +2,8 @@ import {
   labelComponents,
   upscaleNearest,
   headMaskFromCategories,
+  bodyMaskFromCategories,
+  groupFullBody,
 } from "./segmentation.js";
 
 // ---------------------------------------------------------------------------
@@ -32,8 +34,9 @@ const progressLabel = $("model-progress-label");
 const progressBar = $("model-progress-bar");
 const progressText = $("model-progress-text");
 
-let jobs = []; // {id, name, file, img, status, statusText, width, height, heads, workCanvas, stickers, error}
+let jobs = []; // {id, name, file, img, status, statusText, width, height, categories, personMask, faceBoxes, segments, workCanvas, stickers, error}
 let jobSeq = 0;
+let segmentMode = "head"; // "head" | "full" — what to cut out
 let pool = null;      // [{worker, busy}] once initialised
 let poolFailed = false;
 let poolError = "";   // why the pool failed, shown to the user
@@ -187,7 +190,7 @@ function handleWorkerMessage(w, data) {
   if (data.type === "done") {
     job.width = data.width;
     job.height = data.height;
-    job.heads = data.heads;
+    job.categories = data.categories; // raw multiclass mask; stickers are derived per mode
     finishJob(job);
   } else if (data.type === "error") {
     console.warn(`Worker failed on ${job.name}, retrying on main thread:`, data.error);
@@ -251,9 +254,8 @@ async function segmentOnMainThread(job) {
     if (!mainSegmenter) mainSegmenter = await loadMainSegmenter();
     const result = mainSegmenter.segment(canvas);
     const maskImg = result.categoryMask;
-    const head = headMaskFromCategories(maskImg.getAsUint8Array());
-    const full = upscaleNearest(head, maskImg.width, maskImg.height, w, h);
-    return { width: w, height: h, heads: componentsToHeads(full, w, h) };
+    const categories = upscaleNearest(maskImg.getAsUint8Array(), maskImg.width, maskImg.height, w, h);
+    return { width: w, height: h, categories };
   } catch (err) {
     console.warn("Multiclass segmentation failed, trying binary + face fallback:", err);
     const { segmenter: seg, faceDetector: det } = await loadFallbackModels();
@@ -261,31 +263,60 @@ async function segmentOnMainThread(job) {
     const maskImg = result.categoryMask;
     const person = upscaleNearest(maskImg.getAsUint8Array(), maskImg.width, maskImg.height, w, h);
     const detections = det.detect(canvas).detections || [];
-    const heads = [];
-    for (const d of detections) {
+    const faceBoxes = detections.map((d) => {
       const b = d.boundingBox;
-      const x0 = Math.max(0, Math.floor(b.originX - b.width * 0.35));
-      const y0 = Math.max(0, Math.floor(b.originY - b.height * 0.6));
-      const x1 = Math.min(w, Math.ceil(b.originX + b.width * 1.35));
-      const y1 = Math.min(h, Math.ceil(b.originY + b.height * 1.4));
-      const mask = new Uint8Array(w * h);
-      for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x++) if (person[y * w + x]) mask[y * w + x] = 1;
-      }
-      heads.push({ bbox: { minX: x0, minY: y0, maxX: x1 - 1, maxY: y1 - 1 }, mask });
-    }
-    return { width: w, height: h, heads: heads.filter((hd) => countOnes(hd.mask) >= MIN_HEAD_PX) };
+      return {
+        x0: Math.max(0, Math.floor(b.originX - b.width * 0.35)),
+        y0: Math.max(0, Math.floor(b.originY - b.height * 0.6)),
+        x1: Math.min(w, Math.ceil(b.originX + b.width * 1.35)),
+        y1: Math.min(h, Math.ceil(b.originY + b.height * 1.4)),
+      };
+    });
+    return { width: w, height: h, personMask: person, faceBoxes };
   }
 }
 
-function componentsToHeads(mask, w, h) {
+/** Derive the stickers for a job from its stored raw masks, in the current mode.
+ * Multiclass path: the categories array. Binary fallback path: person mask + face boxes. */
+function computeStickers(job) {
+  const w = job.width, h = job.height;
+  if (job.categories) {
+    if (segmentMode === "full") {
+      const head = headMaskFromCategories(job.categories);
+      const body = bodyMaskFromCategories(job.categories);
+      return groupFullBody(head, body, w, h, MIN_HEAD_PX)
+        .map((p, i) => ({ ...p, name: `Person ${i + 1}` }));
+    }
+    return componentsToSegments(headMaskFromCategories(job.categories), w, h, "Head");
+  }
+  if (job.personMask) {
+    if (segmentMode === "full") {
+      return componentsToSegments(job.personMask, w, h, "Person");
+    }
+    return job.faceBoxes.map((b, i) => {
+      const mask = new Uint8Array(w * h);
+      for (let y = b.y0; y < b.y1; y++) {
+        for (let x = b.x0; x < b.x1; x++) if (job.personMask[y * w + x]) mask[y * w + x] = 1;
+      }
+      return { bbox: { minX: b.x0, minY: b.y0, maxX: b.x1 - 1, maxY: b.y1 - 1 }, mask, name: `Head ${i + 1}` };
+    }).filter((s) => countOnes(s.mask) >= MIN_HEAD_PX);
+  }
+  return [];
+}
+
+function componentsToSegments(mask, w, h, label) {
   const { labels, components } = labelComponents(mask, w, h, MIN_HEAD_PX);
   return components.map((c, i) => {
     const m = new Uint8Array(w * h);
     for (let p = 0; p < mask.length; p++) if (labels[p] === c.id) m[p] = 1;
-    return { bbox: c, mask: m, name: `Head ${i + 1}` };
+    return { bbox: c, mask: m, name: `${label} ${i + 1}` };
   });
 }
+
+const noSegmentsText = () => segmentMode === "full"
+  ? "No people found — try a photo with a person fully in frame."
+  : "No heads found — try a photo with faces visible, facing the camera.";
+const doneText = (n) => `Done — ${n} sticker${n > 1 ? "s" : ""} ready.`;
 
 function countOnes(mask) {
   let n = 0;
@@ -320,7 +351,7 @@ function addFiles(files) {
       file,
       img: null,
       status: "queued",
-      heads: [],
+      segments: [],
       stickers: [],
     };
     jobs.push(job);
@@ -402,10 +433,12 @@ async function processOnMainThread(job) {
   job.status = "processing";
   setJobStatus(job, "Segmenting…");
   try {
-    const { width, height, heads } = await segmentOnMainThread(job);
-    job.width = width;
-    job.height = height;
-    job.heads = heads;
+    const result = await segmentOnMainThread(job);
+    job.width = result.width;
+    job.height = result.height;
+    job.categories = result.categories || null;
+    job.personMask = result.personMask || null;
+    job.faceBoxes = result.faceBoxes || null;
     finishJob(job);
   } catch (err) {
     console.error(err);
@@ -417,15 +450,30 @@ async function processOnMainThread(job) {
 
 function finishJob(job) {
   job.status = "done";
-  job.heads.forEach((hd, i) => { hd.name = `Head ${i + 1}`; });
-  if (!job.heads.length) {
-    setJobStatus(job, "No heads found — try a photo with faces visible, facing the camera.");
+  job.segments = computeStickers(job);
+  if (!job.segments.length) {
+    setJobStatus(job, noSegmentsText());
   } else {
-    setJobStatus(job, `Done — ${job.heads.length} sticker${job.heads.length > 1 ? "s" : ""} ready.`);
+    setJobStatus(job, doneText(job.segments.length));
     renderJobStickers(job);
   }
   updateSummary();
   pumpQueue();
+}
+
+/** Re-derive stickers for finished jobs (e.g. after the mode changes). */
+function refreshDoneJobs() {
+  for (const job of jobs.filter((j) => j.status === "done")) {
+    job.segments = computeStickers(job);
+    if (!job.segments.length) {
+      setJobStatus(job, noSegmentsText());
+      job.card.querySelector(".job-stickers").innerHTML = "";
+    } else {
+      setJobStatus(job, doneText(job.segments.length));
+      renderJobStickers(job);
+    }
+  }
+  updateSummary();
 }
 
 function updateSummary() {
@@ -433,7 +481,7 @@ function updateSummary() {
   const failed = jobs.filter((j) => j.status === "failed").length;
   const active = jobs.filter((j) => j.status === "processing" || j.status === "queued").length;
   if (!jobs.length) { setStatus(""); return; }
-  const stickers = jobs.reduce((n, j) => n + j.heads.length, 0);
+  const stickers = jobs.reduce((n, j) => n + (j.segments || []).length, 0);
   setStatus(
     `${jobs.length} photo${jobs.length > 1 ? "s" : ""} · ${done} done · ${active} in progress · ${failed} failed · ${stickers} sticker${stickers === 1 ? "" : "s"} — photos stay on your device, nothing was uploaded.`,
   );
@@ -484,14 +532,14 @@ function cropMask(mask, fullW, x0, y0, w, h) {
   return out;
 }
 
-function renderSticker(job, head) {
+function renderSticker(job, seg) {
   const outline = parseInt($("outline-width").value, 10);
   const outlineColour = $("outline-colour").value;
   const background = $("background").value;
   const shadow = $("shadow").checked;
   const smooth = $("smooth").checked;
 
-  const { minX, minY, maxX, maxY } = head.bbox;
+  const { minX, minY, maxX, maxY } = seg.bbox;
   const pad = outline + (shadow ? 22 : 6) + 8;
   const cw = maxX - minX + 1, ch = maxY - minY + 1;
   const W = cw + pad * 2, H = ch + pad * 2;
@@ -501,7 +549,7 @@ function renderSticker(job, head) {
   let alpha = new Uint8ClampedArray(cw * ch);
   for (let y = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++) {
-      alpha[y * cw + x] = head.mask[(minY + y) * job.width + (minX + x)] ? 255 : 0;
+      alpha[y * cw + x] = seg.mask[(minY + y) * job.width + (minX + x)] ? 255 : 0;
     }
   }
   if (smooth) alpha = blurAlpha(alpha, cw, ch, 2);
@@ -518,7 +566,7 @@ function renderSticker(job, head) {
   cutCtx.putImageData(cutImg, 0, 0);
 
   // Silhouette, dilated by the outline width (offset-draw trick).
-  const sil = maskCanvasFrom(cropMask(head.mask, job.width, minX, minY, cw, ch), cw, ch);
+  const sil = maskCanvasFrom(cropMask(seg.mask, job.width, minX, minY, cw, ch), cw, ch);
   const dil = document.createElement("canvas");
   dil.width = W; dil.height = H;
   const dilCtx = dil.getContext("2d");
@@ -562,7 +610,7 @@ function renderJobStickers(job) {
   drawWorkCanvas(job, w, h);
   job.width = w;
   job.height = h;
-  job.stickers = job.heads.map((head) => ({ canvas: renderSticker(job, head), name: head.name, include: true }));
+  job.stickers = job.segments.map((seg) => ({ canvas: renderSticker(job, seg), name: seg.name, include: true }));
   const list = job.card.querySelector(".job-stickers");
   list.innerHTML = "";
   job.stickers.forEach((st) => {
@@ -591,7 +639,7 @@ function renderJobStickers(job) {
 }
 
 function renderAllStickers() {
-  for (const job of jobs.filter((j) => j.status === "done" && j.heads.length)) renderJobStickers(job);
+  for (const job of jobs.filter((j) => j.status === "done" && (j.segments || []).length)) renderJobStickers(job);
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +763,14 @@ $("url-load").addEventListener("click", async () => {
   }
   if (files.length) addFiles(files);
 });
+
+// Re-derive stickers when the segment mode changes.
+for (const el of document.querySelectorAll('input[name="segment-mode"]')) {
+  el.addEventListener("change", () => {
+    segmentMode = el.value;
+    refreshDoneJobs();
+  });
+}
 
 // Re-render stickers when style controls change (debounced).
 let renderTimer = null;

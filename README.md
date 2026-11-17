@@ -1,8 +1,9 @@
 # 🪄 Stickerify
 
 Upload a photo of people — especially toddlers and kids — and Stickerify cuts out
-every head and turns it into a sticker: thick outline, soft shadow, transparent
-background, ready to download as PNG or as a sticker sheet.
+every head (or the whole person, if you pick Full body) and turns it into a
+sticker: thick outline, soft shadow, transparent background, ready to download
+as PNG or as a sticker sheet.
 
 ## Privacy first
 
@@ -11,14 +12,17 @@ browser with an on-device MediaPipe ML model. There is no server, no upload, no
 account, and no storage — close the tab and the photo is gone. This matters
 most for photos of children: nothing about them is ever sent anywhere.
 
-The tool does not identify anyone. It only finds head shapes (hair + face) and
-cuts them out.
+The tool does not identify anyone. It only finds head and body shapes (hair +
+face, or body-skin + clothes) and cuts them out.
 
 ## How it works
 
 1. **Segment.** A MediaPipe multiclass selfie-segmentation model classifies each
    pixel (background / hair / body-skin / face-skin / clothes / other). Head
    pixels are hair + face-skin. Each separate head blob becomes its own sticker.
+   In **Full body** mode, nearby body blobs (torso, arms, legs) are grouped
+   with their head into one whole-person sticker; body blobs far from any head
+   become their own sticker.
 2. **Cut out.** Heads are cut from the original photo with a soft, feathered edge.
 3. **Stickerify.** A dilated silhouette in your chosen outline colour, an optional
    drop shadow, and an optional background disc turn each cut-out into a sticker.
@@ -45,6 +49,8 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 - Drop in one or many photos, paste them, click **Choose photos**, or load
   from URLs (one per line).
+- Choose **Head only** or **Full body** (head, torso, arms and legs) — switching
+  re-cuts finished photos instantly, no re-segmentation needed.
 - The segmentation model downloads once (~16 MB) with a live progress bar,
   then stays cached in the browser — repeat visits start instantly.
 - Photos are processed in parallel — up to three at a time in background
