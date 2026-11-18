@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax check
+        run: |
+          node --check app.js
+          node --check worker.js
+          node --check segmentation.js
+          node --check telegram-export.js
+          node --check zip.js
+          node --check costumes.js
+          node --check props.js
+          node --check iconify.js
+      - name: Unit tests
+        run: |
+          for t in test/*.test.mjs; do node "$t"; done
