@@ -1,5 +1,7 @@
 # 🪄 Stickerify
 
+[![CI](https://github.com/fimtestxyz/stickerify/actions/workflows/ci.yml/badge.svg)](https://github.com/fimtestxyz/stickerify/actions/workflows/ci.yml)
+
 Upload a photo of people — especially toddlers and kids — and Stickerify cuts out
 every head (or the whole person, if you pick Full body) and turns it into a
 sticker: thick outline, soft shadow, transparent background, ready to download
