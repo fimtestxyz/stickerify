@@ -28,7 +28,7 @@ plain ES modules served as static files.
 | `costumes.js` | Vector cartoon bodies drawn in canvas (no image assets) |
 | `props.js` | Live props list + head-placement math + draw order |
 | `iconify.js` | Live Iconify search: keyword search + SVG fetch over 200+ open sets |
-| `urlfetch.js` | URL loader: direct fetch first, then public CORS proxies (AllOrigins, CodeTabs) when the host sends no Access-Control-Allow-Origin header |
+| `urlfetch.js` | URL loader: direct fetch first, then public CORS proxies (images.weserv.nl, AllOrigins) when the host sends no Access-Control-Allow-Origin header |
 | `telegram-export.js` | Telegram pack export (512px long side, ≤512 KB/sticker) |
 | `zip.js` | Dependency-free STORE ZIP writer + crc32 |
 | `test/*.test.mjs` | Node unit tests, one per module |

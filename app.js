@@ -885,6 +885,9 @@ $("url-load").addEventListener("click", async () => {
       files.push(await loadFromUrl(url));
     } catch (err) {
       console.warn("URL load failed:", url, err);
+      // The status line lives inside #workbench, which stays hidden until
+      // a job exists — unhide it or the failure is invisible.
+      $("workbench").hidden = false;
       setStatus(`Could not fetch ${url} — direct and proxy attempts both failed. Download the photo and upload it instead.`);
     }
   }

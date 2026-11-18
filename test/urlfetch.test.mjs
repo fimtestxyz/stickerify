@@ -8,8 +8,8 @@ const URL = "https://www.google.com/images/branding/googlelogo/2x/googlelogo_col
 // Direct first, then the two proxies, each carrying the encoded URL.
 assert.deepEqual(fetchAttemptsFor(URL), [
   URL,
+  `https://images.weserv.nl/?url=${encodeURIComponent(URL)}`,
   `https://api.allorigins.win/raw?url=${encodeURIComponent(URL)}`,
-  `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(URL)}`,
 ]);
 
 const imageBlob = { type: "image/png" };

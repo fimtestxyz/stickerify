@@ -8,8 +8,12 @@
 // uploaded from the device never leave it.
 
 const CORS_PROXIES = [
+  // images.weserv.nl is an image-only proxy: it fetches the public image
+  // server-side and returns it with CORS headers. Verified live 2026-11-18
+  // (Google logo, 200 in ~1s) on a day AllOrigins 522'd and CodeTabs timed
+  // out entirely; corsproxy.io now needs an API key (401), so it is out.
+  (u) => `https://images.weserv.nl/?url=${encodeURIComponent(u)}`,
   (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
 ];
 
 /** Ordered fetch attempts for an image URL: direct first, proxies after. */
