@@ -9,6 +9,7 @@ import { exportTelegramPack, TELEGRAM_MAX_STICKERS } from "./telegram-export.js"
 import { COSTUMES } from "./costumes.js";
 import { PROPS, propSvgUrl, propDrawRect, sortPropsForDrawing, fetchPropSvg } from "./props.js";
 import { searchIconify, fetchIconifySvg, iconifySvgUrl, iconLabel, sortSearchResults } from "./iconify.js";
+import { fetchImageBlob } from "./urlfetch.js";
 
 // ---------------------------------------------------------------------------
 // Models (MediaPipe Tasks Vision, Apache-2.0). All run on-device in the
@@ -869,10 +870,8 @@ document.addEventListener("paste", (e) => {
 
 async function loadFromUrl(url) {
   setStatus("Fetching photo…");
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const blob = await res.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("not an image");
+  const { blob, viaProxy } = await fetchImageBlob(url);
+  if (viaProxy) setStatus("That host blocks direct reads — fetched through a CORS proxy.");
   const name = decodeURIComponent(url.split("/").pop().split("?")[0] || "photo");
   return new File([blob], name, { type: blob.type });
 }
@@ -886,7 +885,7 @@ $("url-load").addEventListener("click", async () => {
       files.push(await loadFromUrl(url));
     } catch (err) {
       console.warn("URL load failed:", url, err);
-      setStatus(`Could not fetch ${url} — the host may block cross-origin reads. Download the photo and upload it instead.`);
+      setStatus(`Could not fetch ${url} — direct and proxy attempts both failed. Download the photo and upload it instead.`);
     }
   }
   if (files.length) addFiles(files);

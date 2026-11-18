@@ -28,6 +28,7 @@ plain ES modules served as static files.
 | `costumes.js` | Vector cartoon bodies drawn in canvas (no image assets) |
 | `props.js` | Live props list + head-placement math + draw order |
 | `iconify.js` | Live Iconify search: keyword search + SVG fetch over 200+ open sets |
+| `urlfetch.js` | URL loader: direct fetch first, then public CORS proxies (AllOrigins, CodeTabs) when the host sends no Access-Control-Allow-Origin header |
 | `telegram-export.js` | Telegram pack export (512px long side, ≤512 KB/sticker) |
 | `zip.js` | Dependency-free STORE ZIP writer + crc32 |
 | `test/*.test.mjs` | Node unit tests, one per module |
@@ -46,7 +47,7 @@ plain ES modules served as static files.
 ```bash
 node --check app.js && node --check worker.js && node --check segmentation.js
 node --check telegram-export.js && node --check zip.js && node --check costumes.js
-node --check props.js && node --check iconify.js
+node --check props.js && node --check iconify.js && node --check urlfetch.js
 for t in test/*.test.mjs; do node "$t"; done
 ```
 
