@@ -22,6 +22,7 @@ jobs:
           node --check costumes.js
           node --check props.js
           node --check iconify.js
+          node --check urlfetch.js
       - name: Unit tests
         run: |
           for t in test/*.test.mjs; do node "$t"; done
