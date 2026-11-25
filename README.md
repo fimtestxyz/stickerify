@@ -78,6 +78,8 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
   object (people, dogs, cats, cars, bottles, chairs — 21 kinds in all).
   Tap to select the ones you want, then download them as a ZIP of PNGs or
   as a Telegram pack. Same privacy rule: the photo never leaves the device.
+  The object splitting can be switched off ("Split into individual objects",
+  remembered on the device) — background removal still works without it.
 - **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
   stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
   100×100 pack icon) and shows the steps to publish it with Telegram's

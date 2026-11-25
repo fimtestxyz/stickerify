@@ -23,7 +23,7 @@ plain ES modules served as static files.
 | --- | --- |
 | `index.html` | Page structure: upload, workbench, costume/props controls, export |
 | `segment.html` | Segment-objects page: upload one photo, background-removed preview, object grid, bulk download |
-| `segment.js` | Segment-objects UI: deeplab worker, cut-outs, selection, ZIP + Telegram export |
+| `segment.js` | Segment-objects UI: DeepLabV3 worker, cut-outs, selection, ZIP + Telegram export; "Split into individual objects" toggle (remembered in localStorage) hides the object grid + bulk buttons, leaving background removal |
 | `app.js` | UI + orchestration: jobs, rendering, costumes, props, exports |
 | `worker.js` | Classic Web Worker running MediaPipe (must stay classic: the WASM loader needs `importScripts()`, which module workers forbid) — two models: `selfie` (default, main page) and `deeplab` (segment page, picked by the init message) |
 | `segmentation.js` | DOM-free mask helpers: connected components, head/body masks, full-body grouping, `objectsFromCategories` (per-category components for the segment page) + `DEEPLAB_CATEGORIES` (21 PASCAL VOC names) |

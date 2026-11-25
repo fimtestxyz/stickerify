@@ -197,6 +197,11 @@ footer a { color: inherit; }
   font-size: 0.95rem;
   font-family: inherit;
 }
+.segment-toggle {
+  display: flex; gap: 8px; align-items: center; justify-content: center;
+  margin-top: 16px; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+}
+.segment-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
 #objects-grid { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
 .object-tile {
   width: 160px;

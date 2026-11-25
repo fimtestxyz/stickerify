@@ -30,6 +30,9 @@
       <button id="url-load" type="button" class="secondary">Load URL</button>
     </div>
     <p class="hint">A host that blocks cross-origin reads is retried through a public CORS proxy — only the pasted public URL goes to the proxy, your uploads never leave your device.</p>
+    <label class="segment-toggle"><input id="segment-objects-toggle" type="checkbox" checked> Split into individual objects</label>
+    <p class="hint">Uncheck for background removal only — the photo is still cut out, but no
+    object tiles and no per-object downloads. Your choice is remembered on this device.</p>
   </section>
 
   <div id="model-progress" hidden>
@@ -47,14 +50,16 @@
       <button id="download-bg" type="button" class="secondary">⬇ Download background-removed PNG</button>
     </div>
 
-    <h2>Objects <span id="objects-count"></span></h2>
-    <p class="hint">Tap an object to select or deselect it. Selected objects download as
-    separate PNG stickers — one file per object.</p>
-    <div class="actions">
-      <button id="select-all" type="button" class="secondary">Select all</button>
-      <button id="select-none" type="button" class="secondary">Select none</button>
+    <div id="objects-section">
+      <h2>Objects <span id="objects-count"></span></h2>
+      <p class="hint">Tap an object to select or deselect it. Selected objects download as
+      separate PNG stickers — one file per object.</p>
+      <div class="actions">
+        <button id="select-all" type="button" class="secondary">Select all</button>
+        <button id="select-none" type="button" class="secondary">Select none</button>
+      </div>
+      <div id="objects-grid"></div>
     </div>
-    <div id="objects-grid"></div>
 
     <div class="actions">
       <button id="download-zip" type="button">⬇ Download selected as ZIP</button>
@@ -90,7 +95,9 @@
     </ol>
     <p class="note">Limits: the model knows 21 kinds of object. Things outside that list
     are treated as background, and two objects of the same kind that touch each
-    other come out as one sticker. This tool does not identify anyone — it only
+    other come out as one sticker. If the splitting looks wrong, uncheck
+    "Split into individual objects" above — you still get the background-removed
+    photo. This tool does not identify anyone — it only
     finds object shapes, and it never stores a photo.</p>
   </section>
 </main>

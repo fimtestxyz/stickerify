@@ -32,6 +32,7 @@ const statusEl = $("status");
 const bgCanvas = $("bg-removed");
 const objectsGrid = $("objects-grid");
 const objectsCount = $("objects-count");
+const segmentToggle = $("segment-objects-toggle");
 
 let worker = null;      // the deeplab worker, once ready
 let workerPromise = null;
@@ -42,6 +43,18 @@ let labels = null;      // Int32Array: per-pixel object id (-1 = none)
 let displayObjects = []; // objects sorted largest-first (labels index by id)
 let selected = new Set(); // object ids
 let photoBase = "photo";
+let gridBuilt = false;   // the object tiles have been built for this photo
+let foundStatus = "";    // status text to restore when segmentation is re-enabled
+
+// Whether to split into objects is the user's choice, remembered on this
+// device — the splitting is the unreliable part, background removal is not.
+const SEGMENT_TOGGLE_KEY = "stickerify-segment-objects";
+try {
+  if (localStorage.getItem(SEGMENT_TOGGLE_KEY) === "off") segmentToggle.checked = false;
+} catch { /* storage unavailable — default stays on */ }
+function saveTogglePref() {
+  try { localStorage.setItem(SEGMENT_TOGGLE_KEY, segmentToggle.checked ? "on" : "off"); } catch { /* ignore */ }
+}
 
 // ---------------------------------------------------------------------------
 // Model download with live progress (fetch + Cache API)
@@ -238,6 +251,7 @@ function renderResults(categories, w, h) {
   labels = foundLabels;
   displayObjects = [...objects].sort((a, b) => b.count - a.count).slice(0, MAX_OBJECTS);
   selected = new Set(displayObjects.map((o) => o.id));
+  gridBuilt = false;
   results.hidden = false;
 
   // Background-removed full preview: foreground = any recognised category.
@@ -252,23 +266,39 @@ function renderResults(categories, w, h) {
   for (let i = 0; i < fgAlpha.length; i++) bgImg.data[i * 4 + 3] = fgAlpha[i];
   bctx.putImageData(bgImg, 0, 0);
 
-  // Object grid.
-  objectsGrid.innerHTML = "";
-  if (!displayObjects.length) {
-    setStatus("No objects found — try a photo with a person, pet, car, bottle, chair or similar in it.");
-    objectsCount.textContent = "";
-    updateActions();
+  foundStatus = displayObjects.length
+    ? `Found ${objects.length} object${objects.length === 1 ? "" : "s"}${objects.length > MAX_OBJECTS ? ` — showing the ${MAX_OBJECTS} largest` : ""}. Tap to select the ones you want.`
+    : "No objects found — try a photo with a person, pet, car, bottle, chair or similar in it.";
+  applySegmentToggle();
+  updateActions();
+}
+
+/** Show or hide the object-splitting part of the results, per the toggle.
+ * Hiding never re-segments: the tiles are built once and only shown again. */
+function applySegmentToggle() {
+  const on = segmentToggle.checked;
+  $("objects-section").hidden = !on;
+  $("download-zip").hidden = !on;
+  $("export-telegram").hidden = !on;
+  if (!on) {
+    setStatus("Background removed. Object segmentation is off — check 'Split into individual objects' above to see the objects.");
     return;
   }
-  setStatus(`Found ${objects.length} object${objects.length === 1 ? "" : "s"}${objects.length > MAX_OBJECTS ? ` — showing the ${MAX_OBJECTS} largest` : ""}. Tap to select the ones you want.`);
+  setStatus(foundStatus);
+  if (displayObjects.length && !gridBuilt) renderObjectGrid();
+}
+
+/** Build the object tiles once per photo (cut-outs are cached on the objects). */
+function renderObjectGrid() {
+  objectsGrid.innerHTML = "";
   for (const obj of displayObjects) {
-    obj.canvas = cutOutObject(obj);
+    if (!obj.canvas) obj.canvas = cutOutObject(obj);
     const tile = document.createElement("div");
-    tile.className = "object-tile selected";
+    tile.className = "object-tile" + (selected.has(obj.id) ? " selected" : "");
     tile.dataset.id = obj.id;
     tile.tabIndex = 0;
     tile.setAttribute("role", "checkbox");
-    tile.setAttribute("aria-checked", "true");
+    tile.setAttribute("aria-checked", selected.has(obj.id) ? "true" : "false");
     tile.title = `${DEEPLAB_CATEGORIES[obj.category]} — click to select / deselect`;
     const thumb = document.createElement("div");
     thumb.className = "checker object-thumb";
@@ -291,6 +321,7 @@ function renderResults(categories, w, h) {
     });
     objectsGrid.appendChild(tile);
   }
+  gridBuilt = true;
   updateActions();
 }
 
@@ -404,6 +435,12 @@ $("url-load").addEventListener("click", async () => {
     setStatus(`Could not load that URL: ${err?.message || err}`);
   }
 });
+segmentToggle.addEventListener("change", () => {
+  saveTogglePref();
+  if (results.hidden) return; // nothing shown yet — the next run picks it up
+  applySegmentToggle();
+  updateActions();
+});
 $("select-all").addEventListener("click", () => {
   selected = new Set(displayObjects.map((o) => o.id));
   objectsGrid.querySelectorAll(".object-tile").forEach((t) => { t.classList.add("selected"); t.setAttribute("aria-checked", "true"); });
@@ -423,6 +460,8 @@ $("new-photo").addEventListener("click", () => {
   objectsGrid.innerHTML = "";
   displayObjects = [];
   selected = new Set();
+  gridBuilt = false;
+  foundStatus = "";
   labels = null;
   workCanvas = null;
   setStatus("");
