@@ -15,6 +15,7 @@ jobs:
       - name: Syntax check
         run: |
           node --check app.js
+          node --check segment.js
           node --check worker.js
           node --check segmentation.js
           node --check telegram-export.js
