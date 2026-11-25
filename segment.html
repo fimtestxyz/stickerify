@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stickerify — segment objects</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>✂️ Stickerify — segment objects</h1>
+  <p class="tagline">Upload a photo — we remove the background and cut out every object in it, so you can pick the ones you want as stickers.</p>
+  <p class="privacy">🔒 <strong>Private by design:</strong> your photo never leaves this device.
+  Segmentation runs entirely in your browser with an on-device ML model — nothing is
+  uploaded, stored, or sent anywhere.</p>
+  <p><a href="index.html">← Back to head stickers</a></p>
+</header>
+
+<main>
+  <section id="drop-zone" tabindex="0" aria-label="Upload a photo">
+    <p class="big">Drop a photo here, paste it, or</p>
+    <label class="upload-btn" for="file-input">Choose a photo</label>
+    <input id="file-input" type="file" accept="image/*" hidden>
+    <p class="hint">One photo at a time — it can hold as many objects as you like.
+    Works best with clear, separate objects: people, pets, bottles, chairs,
+    cars… JPG, PNG, WebP.</p>
+    <p class="or">or load from a URL</p>
+    <div class="url-row">
+      <input id="url-input" type="url" placeholder="https://…/photo.jpg" aria-label="Image URL">
+      <button id="url-load" type="button" class="secondary">Load URL</button>
+    </div>
+    <p class="hint">A host that blocks cross-origin reads is retried through a public CORS proxy — only the pasted public URL goes to the proxy, your uploads never leave your device.</p>
+  </section>
+
+  <div id="model-progress" hidden>
+    <div id="model-progress-label">Downloading segmentation model…</div>
+    <progress id="model-progress-bar" max="100" value="0"></progress>
+    <span id="model-progress-text"></span>
+  </div>
+
+  <div id="status" role="status"></div>
+
+  <section id="results" hidden>
+    <h2>Background removed</h2>
+    <div class="checker preview-wrap"><canvas id="bg-removed"></canvas></div>
+    <div class="actions">
+      <button id="download-bg" type="button" class="secondary">⬇ Download background-removed PNG</button>
+    </div>
+
+    <h2>Objects <span id="objects-count"></span></h2>
+    <p class="hint">Tap an object to select or deselect it. Selected objects download as
+    separate PNG stickers — one file per object.</p>
+    <div class="actions">
+      <button id="select-all" type="button" class="secondary">Select all</button>
+      <button id="select-none" type="button" class="secondary">Select none</button>
+    </div>
+    <div id="objects-grid"></div>
+
+    <div class="actions">
+      <button id="download-zip" type="button">⬇ Download selected as ZIP</button>
+      <button id="export-telegram" type="button">✈ Export Telegram pack (.zip)</button>
+      <button id="new-photo" type="button" class="secondary">↺ New photo</button>
+    </div>
+  </section>
+
+  <section id="telegram-guide" class="how" hidden>
+    <h2>Publish your pack on Telegram</h2>
+    <ol>
+      <li>Unzip <code>stickerify-telegram-pack.zip</code> — it holds one file per sticker, plus a pack icon.</li>
+      <li>In Telegram, open <a href="https://t.me/Stickers" target="_blank" rel="noopener">@Stickers</a> and send <code>/newpack</code>, then a name for your pack.</li>
+      <li>Send each sticker file as a <strong>document</strong> (📎 → File, not Photo) so Telegram doesn't compress it.</li>
+      <li>Send one emoji for each sticker when the bot asks.</li>
+      <li>Send <code>/publish</code>, choose a short link name, and share your <code>t.me/addstickers/…</code> link.</li>
+    </ol>
+    <p class="note">Packs hold up to 120 stickers. Your photo never left this device — only the sticker files you just downloaded go to Telegram, when you choose to send them.</p>
+  </section>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <ol>
+      <li><strong>Segment.</strong> A MediaPipe DeepLabV3 model recognises 21 kinds of
+        object — people, dogs, cats, cars, bottles, chairs and more — in the
+        photo, on your device. The model downloads once (~2.7 MB) with a
+        progress bar, then stays cached.</li>
+      <li><strong>Background removed.</strong> Everything the model recognises stays;
+        the rest goes transparent.</li>
+      <li><strong>Objects.</strong> Each separate blob of the same kind becomes its own
+        sticker. Tap to select the ones you want, then download them all at
+        once as a ZIP — or as a Telegram pack.</li>
+    </ol>
+    <p class="note">Limits: the model knows 21 kinds of object. Things outside that list
+    are treated as background, and two objects of the same kind that touch each
+    other come out as one sticker. This tool does not identify anyone — it only
+    finds object shapes, and it never stores a photo.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Stickerify · MIT · Built on
+  <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter">MediaPipe Image Segmenter</a>
+  (Apache-2.0). Models load from Google's CDN at runtime.</p>
+</footer>
+
+<script type="module" src="segment.js"></script>
+</body>
+</html>

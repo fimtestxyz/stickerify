@@ -7,6 +7,8 @@ import {
   headMaskFromCategories,
   bodyMaskFromCategories,
   groupFullBody,
+  objectsFromCategories,
+  DEEPLAB_CATEGORIES,
   CATEGORY,
 } from "../segmentation.js";
 
@@ -118,3 +120,102 @@ function grid(rows) {
 }
 
 console.log("segmentation.js: all tests passed");
+
+// --- objectsFromCategories: helpers ---
+function catGrid(rows) {
+  const h = rows.length, w = rows[0].length;
+  const m = new Uint8Array(w * h);
+  rows.forEach((row, y) => [...row].forEach((ch, x) => { m[y * w + x] = Number(ch); }));
+  return { mask: m, w, h };
+}
+
+// Two objects, different categories: split by category, bboxes + labels right.
+{
+  const { mask, w, h } = catGrid([
+    "11....",
+    "11....",
+    "....22",
+    "....22",
+  ]);
+  const { labels, objects } = objectsFromCategories(mask, w, h, 1);
+  assert.equal(objects.length, 2, "two objects");
+  assert.equal(objects[0].category, 1, "first object is category 1");
+  assert.equal(objects[0].count, 4, "first object has 4 px");
+  assert.deepEqual(
+    [objects[0].bbox.minX, objects[0].bbox.minY, objects[0].bbox.maxX, objects[0].bbox.maxY],
+    [0, 0, 1, 1],
+  );
+  assert.equal(objects[1].category, 2, "second object is category 2");
+  assert.deepEqual(
+    [objects[1].bbox.minX, objects[1].bbox.minY, objects[1].bbox.maxX, objects[1].bbox.maxY],
+    [4, 2, 5, 3],
+  );
+  assert.equal(labels[0], 0, "top-left pixel belongs to object 0");
+  assert.equal(labels[3 * w + 5], 1, "bottom-right pixel belongs to object 1");
+  assert.equal(labels[2 * w + 2], -1, "background pixel has no object");
+}
+
+// Two separate blobs of the SAME category: split into two instances.
+{
+  const { mask, w, h } = catGrid([
+    "88..88",
+    "88..88",
+  ]);
+  const { objects } = objectsFromCategories(mask, w, h, 1);
+  assert.equal(objects.length, 2, "same-category blobs are separate objects");
+  assert.equal(objects[0].category, 8, "both are category 8");
+  assert.equal(objects[1].category, 8, "both are category 8");
+  assert.equal(objects[0].count, 4, "each has 4 px");
+}
+
+// Touching blobs of different categories stay separate (category boundary splits).
+{
+  const { mask, w, h } = catGrid([
+    "1122",
+    "1122",
+  ]);
+  const { objects } = objectsFromCategories(mask, w, h, 1);
+  assert.equal(objects.length, 2, "adjacent different categories do not merge");
+}
+
+// Diagonal pixels of the same category are NOT connected (4-connectivity).
+{
+  const { mask, w, h } = catGrid([
+    "8.",
+    ".8",
+  ]);
+  const { objects } = objectsFromCategories(mask, w, h, 1);
+  assert.equal(objects.length, 2, "diagonal pixels are separate objects");
+}
+
+// Tiny blob dropped by minPixels; its labels reset to -1.
+{
+  const { mask, w, h } = catGrid([
+    "88....",
+    "88....",
+    "....8.",
+  ]);
+  const { labels, objects } = objectsFromCategories(mask, w, h, 2);
+  assert.equal(objects.length, 1, "1 px speck dropped by the size filter");
+  assert.equal(labels[2 * w + 4], -1, "dropped speck pixel has label -1");
+}
+
+// Background-only mask yields no objects.
+{
+  const { mask, w, h } = catGrid(["000", "000"]);
+  const { objects } = objectsFromCategories(mask, w, h, 1);
+  assert.equal(objects.length, 0, "no objects in an all-background mask");
+}
+
+// --- DEEPLAB_CATEGORIES: PASCAL VOC 21 classes ---
+{
+  assert.equal(DEEPLAB_CATEGORIES.length, 21, "21 DeepLab categories");
+  assert.equal(DEEPLAB_CATEGORIES[0], "background");
+  assert.equal(DEEPLAB_CATEGORIES[5], "bottle");
+  assert.equal(DEEPLAB_CATEGORIES[8], "cat");
+  assert.equal(DEEPLAB_CATEGORIES[12], "dog");
+  assert.equal(DEEPLAB_CATEGORIES[15], "person");
+  assert.equal(DEEPLAB_CATEGORIES[20], "tv");
+}
+
+console.log("objectsFromCategories: all tests passed");

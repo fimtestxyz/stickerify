@@ -201,3 +201,64 @@ export function groupFullBody(headMask, bodyMask, width, height, minPixels = 40)
       return { bbox: person.bbox, mask: m };
     });
 }
+
+/** DeepLabV3 (PASCAL VOC) category names, index = category id. */
+export const DEEPLAB_CATEGORIES = [
+  "background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus",
+  "car", "cat", "chair", "cow", "dining table", "dog", "horse", "motorbike",
+  "person", "potted plant", "sheep", "sofa", "train", "tv",
+];
+
+/**
+ * Split a DeepLab category mask into individual objects: connected
+ * components where two pixels join only when they share a category and
+ * touch (4-connectivity). Returns { labels, objects } — labels is an
+ * Int32Array of per-pixel object ids (-1 = background or dropped), and
+ * objects is [{ id, category, count, bbox }] in first-seen (scan) order,
+ * so labels[p] === objects[i].id always holds. Sort a copy for display;
+ * never reorder this array in place. Components smaller than minPixels
+ * are dropped (noise) and their labels reset to -1.
+ */
+export function objectsFromCategories(catMask, width, height, minPixels = 100) {
+  const labels = new Int32Array(width * height).fill(-1);
+  const objects = [];
+  const queue = new Int32Array(width * height);
+  const dirs = [1, -1, width, -width];
+
+  for (let start = 0; start < catMask.length; start++) {
+    const cat = catMask[start];
+    if (!cat || labels[start] !== -1) continue;
+    const id = objects.length;
+    let qHead = 0, qTail = 0;
+    queue[qTail++] = start;
+    labels[start] = id;
+    let count = 0;
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    while (qHead < qTail) {
+      const p = queue[qHead++];
+      count++;
+      const x = p % width, y = (p / width) | 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      for (const d of dirs) {
+        const n = p + d;
+        if (d === 1 && x === width - 1) continue;
+        if (d === -1 && x === 0) continue;
+        if (n < 0 || n >= catMask.length) continue;
+        if (catMask[n] === cat && labels[n] === -1) {
+          labels[n] = id;
+          queue[qTail++] = n;
+        }
+      }
+    }
+    if (count >= minPixels) {
+      objects.push({ id, category: cat, count, bbox: { minX, minY, maxX, maxY } });
+    } else {
+      // Dropped as noise: reset this component's labels to -1.
+      for (let i = 0; i < qTail; i++) labels[queue[i]] = -1;
+    }
+  }
+  return { labels, objects };
+}

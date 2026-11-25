@@ -73,6 +73,11 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
   above) and tap one to add it to the Props row. Added stickers behave like
   the built-ins: they stack, follow the head, and export to Telegram.
 - Download individual stickers as PNG, or all of them at once as a sticker sheet.
+- **Segment objects** ([segment.html](segment.html)): one photo, many objects.
+  A DeepLabV3 model removes the background and cuts out every recognised
+  object (people, dogs, cats, cars, bottles, chairs — 21 kinds in all).
+  Tap to select the ones you want, then download them as a ZIP of PNGs or
+  as a Telegram pack. Same privacy rule: the photo never leaves the device.
 - **Export Telegram pack**: one click builds a ZIP of Telegram-compliant
   stickers (512 px on the long side, WebP or PNG, under 512 KB each, plus a
   100×100 pack icon) and shows the steps to publish it with Telegram's
@@ -84,6 +89,8 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 | File | What it is |
 | --- | --- |
 | `index.html` | Upload UI, controls, job list |
+| `segment.html` | Segment-objects page: one photo, background-removed preview, object grid, bulk download |
+| `segment.js` | Segment-objects UI: DeepLabV3 worker, cut-outs, selection, ZIP + Telegram export |
 | `styles.css` | Styling |
 | `app.js` | Model download with progress, job queue, worker pool, sticker rendering, UI |
 | `worker.js` | Segmentation worker (one per concurrent photo) |
@@ -98,6 +105,8 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 
 - Multiclass selfie segmentation (256×256, float32, Apache-2.0):
   `https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite`
+- DeepLabV3 general object segmentation (float32, Apache-2.0, ~2.7 MB):
+  `https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite`
 - Fallback binary selfie segmenter (float16, Apache-2.0) and BlazeFace
   short-range face detector (float16, Apache-2.0)
 - Runtime: `@mediapipe/tasks-vision@0.10.14` via jsDelivr
@@ -105,7 +114,7 @@ Or deploy the folder as-is to GitHub Pages / Netlify / any static host.
 ## Tests
 
 ```bash
-node --check app.js && node --check worker.js && node --check segmentation.js
+node --check app.js && node --check segment.js && node --check worker.js && node --check segmentation.js
 node --check telegram-export.js && node --check zip.js && node --check costumes.js
 node --check props.js
 node test/segmentation.test.mjs

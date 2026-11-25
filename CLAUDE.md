@@ -22,9 +22,11 @@ plain ES modules served as static files.
 | File | What it does |
 | --- | --- |
 | `index.html` | Page structure: upload, workbench, costume/props controls, export |
+| `segment.html` | Segment-objects page: upload one photo, background-removed preview, object grid, bulk download |
+| `segment.js` | Segment-objects UI: deeplab worker, cut-outs, selection, ZIP + Telegram export |
 | `app.js` | UI + orchestration: jobs, rendering, costumes, props, exports |
-| `worker.js` | Classic Web Worker running MediaPipe (must stay classic: the WASM loader needs `importScripts()`, which module workers forbid) |
-| `segmentation.js` | DOM-free mask helpers: connected components, head/body masks, full-body grouping |
+| `worker.js` | Classic Web Worker running MediaPipe (must stay classic: the WASM loader needs `importScripts()`, which module workers forbid) — two models: `selfie` (default, main page) and `deeplab` (segment page, picked by the init message) |
+| `segmentation.js` | DOM-free mask helpers: connected components, head/body masks, full-body grouping, `objectsFromCategories` (per-category components for the segment page) + `DEEPLAB_CATEGORIES` (21 PASCAL VOC names) |
 | `costumes.js` | Vector cartoon bodies drawn in canvas (no image assets) |
 | `props.js` | Live props list + head-placement math + draw order |
 | `iconify.js` | Live Iconify search: keyword search + SVG fetch over 200+ open sets |
@@ -38,6 +40,10 @@ plain ES modules served as static files.
 - Runtime `@mediapipe/tasks-vision@0.10.14` via jsDelivr.
 - Primary: multiclass selfie segmentation — categories 0 background, 1 hair,
   2 body-skin, 3 face-skin, 4 clothes, 5 other. **Head = hair (1) + face-skin (3).**
+- Segment-objects page: DeepLabV3 — 21 PASCAL VOC classes (person, dog, cat,
+  bottle, chair, …), ~2.7 MB. Foreground = any non-background class; each
+  connected component of one category is one object (two same-kind objects
+  that touch merge into one; kinds outside the 21 are background).
 - Fallback: binary selfie segmenter ∩ expanded BlazeFace boxes.
 - **CPU delegate throughout** — the GPU delegate scrambles multiclass
   categories on iOS Safari.
@@ -45,7 +51,7 @@ plain ES modules served as static files.
 ## How to test
 
 ```bash
-node --check app.js && node --check worker.js && node --check segmentation.js
+node --check app.js && node --check segment.js && node --check worker.js && node --check segmentation.js
 node --check telegram-export.js && node --check zip.js && node --check costumes.js
 node --check props.js && node --check iconify.js && node --check urlfetch.js
 for t in test/*.test.mjs; do node "$t"; done
